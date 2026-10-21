@@ -26,11 +26,11 @@ export function metricsFor(observations: Observation[]): CycleMetrics {
 export function compareCycles(
   prompts: Prompt[],
   observations: Observation[],
-  baseline: Cycle | null,
-  retest: Cycle | null,
+  from: Cycle | null,
+  to: Cycle | null,
 ): CompareReport {
-  const baselineObs = baseline ? observations.filter((item) => item.cycleId === baseline.id) : []
-  const retestObs = retest ? observations.filter((item) => item.cycleId === retest.id) : []
+  const fromObs = from ? observations.filter((item) => item.cycleId === from.id) : []
+  const toObs = to ? observations.filter((item) => item.cycleId === to.id) : []
   const any = (list: Observation[], promptId: string, pick: (item: Observation) => boolean): boolean | null => {
     const rows = list.filter((item) => item.promptId === promptId)
     if (rows.length === 0) return null
@@ -45,20 +45,18 @@ export function compareCycles(
     return [...found]
   }
   return {
-    baseline: baseline
-      ? { id: baseline.id, name: baseline.name, kind: baseline.kind, metrics: metricsFor(baselineObs) }
-      : null,
-    retest: retest ? { id: retest.id, name: retest.name, kind: retest.kind, metrics: metricsFor(retestObs) } : null,
+    from: from ? { id: from.id, name: from.name, kind: from.kind, metrics: metricsFor(fromObs) } : null,
+    to: to ? { id: to.id, name: to.name, kind: to.kind, metrics: metricsFor(toObs) } : null,
     rows: prompts.map((prompt) => ({
       promptId: prompt.id,
       text: prompt.text,
       cluster: prompt.cluster,
-      baselineMentioned: any(baselineObs, prompt.id, (item) => item.brandMentioned),
-      retestMentioned: any(retestObs, prompt.id, (item) => item.brandMentioned),
-      baselineCited: any(baselineObs, prompt.id, (item) => item.ownUrlCited),
-      retestCited: any(retestObs, prompt.id, (item) => item.ownUrlCited),
-      baselineCompetitors: names(baselineObs, prompt.id),
-      retestCompetitors: names(retestObs, prompt.id),
+      fromMentioned: any(fromObs, prompt.id, (item) => item.brandMentioned),
+      toMentioned: any(toObs, prompt.id, (item) => item.brandMentioned),
+      fromCited: any(fromObs, prompt.id, (item) => item.ownUrlCited),
+      toCited: any(toObs, prompt.id, (item) => item.ownUrlCited),
+      fromCompetitors: names(fromObs, prompt.id),
+      toCompetitors: names(toObs, prompt.id),
     })),
   }
 }

@@ -57,20 +57,27 @@ export function OverviewPage() {
             <Metric label="题库" value={String(counts?.prompts ?? 0)} detail={clusterDetail(counts?.byCluster)} />
             <Metric label="监测记录" value={String(counts?.observations ?? 0)} detail="含种子示例，可删除后换成你自己的粘贴" />
             <Metric
-              label="基线提及率"
-              value={percent(overview.baseline?.metrics.mentionRate)}
-              detail={overview.baseline ? overview.baseline.name : '还没有基线轮次'}
+              label="首轮提及率"
+              value={percent(overview.earliest?.metrics.mentionRate)}
+              detail={overview.earliest ? overview.earliest.name : '还没有轮次'}
             />
             <Metric
-              label="复测提及率"
-              value={percent(overview.retest?.metrics.mentionRate)}
-              detail={overview.retest ? `${overview.retest.name} · 引用 ${percent(overview.retest.metrics.citationRate)}` : '还没有复测'}
+              label="最近一轮提及率"
+              value={percent(overview.latest?.metrics.mentionRate)}
+              detail={
+                overview.latest
+                  ? overview.latest.id === overview.earliest?.id
+                    ? `${overview.latest.name} · 优化后再新建一轮`
+                    : `${overview.latest.name} · 引用 ${percent(overview.latest.metrics.citationRate)}`
+                  : '还没有轮次'
+              }
             />
           </Grid>
         ) : null}
         <Section>
           <VStack gap={3}>
             <Heading level={2}>四周自测</Heading>
+            <Text color="secondary">这是第一轮验证。之后每次改完公开页，新建一个轮次再测，任意两轮都可以对比。</Text>
             {PLAYBOOK.map((step) => (
               <VStack key={step.week} gap={1}>
                 <Heading level={3}>

@@ -6,7 +6,7 @@ import { Table, pixel, proportional } from '@astryxdesign/core/Table'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
 import { HStack } from '@astryxdesign/core/HStack'
-import { CLUSTER_LABEL, platformLabel } from '../../../shared/platforms.ts'
+import { CLUSTER_LABEL, CYCLE_KIND_LABEL, platformLabel } from '../../../shared/platforms.ts'
 import type { CompareReport, Cycle, CycleMetrics } from '../../../shared/types.ts'
 import { api } from '../api'
 import { percent } from '../format'
@@ -17,18 +17,18 @@ interface CompareTableRow extends Record<string, unknown> {
   promptId: string
   cluster: string
   text: string
-  baselineMentioned: string
-  retestMentioned: string
-  baselineCited: string
-  retestCited: string
+  fromMentioned: string
+  toMentioned: string
+  fromCited: string
+  toCited: string
   competitors: string
 }
 
 export function ComparePage() {
   const { studioId } = useStudio()
   const [cycles, setCycles] = useState<Cycle[]>([])
-  const [baselineId, setBaselineId] = useState('')
-  const [retestId, setRetestId] = useState('')
+  const [fromId, setFromId] = useState('')
+  const [toId, setToId] = useState('')
   const [report, setReport] = useState<CompareReport | null>(null)
   const [error, setError] = useState('')
 
@@ -37,53 +37,56 @@ export function ComparePage() {
     api<{ cycles: Cycle[] }>(`/api/studios/${studioId}/cycles`)
       .then((payload) => {
         setCycles(payload.cycles)
-        setBaselineId((current) => current || payload.cycles.find((item) => item.kind === 'baseline')?.id || '')
-        setRetestId((current) => current || [...payload.cycles].reverse().find((item) => item.kind === 'retest')?.id || '')
+        setFromId(payload.cycles[0]?.id || '')
+        setToId(payload.cycles.at(-1)?.id || '')
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : '轮次加载失败'))
   }, [studioId])
 
   useEffect(() => {
-    if (!studioId || !baselineId || !retestId) return
-    const params = new URLSearchParams({ baseline: baselineId, retest: retestId })
+    if (!studioId || !fromId || !toId) return
+    const params = new URLSearchParams({ from: fromId, to: toId })
     api<CompareReport>(`/api/studios/${studioId}/compare?${params.toString()}`)
       .then(setReport)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : '对比加载失败'))
-  }, [studioId, baselineId, retestId])
+  }, [studioId, fromId, toId])
 
   const rows: CompareTableRow[] = (report?.rows ?? []).map((row) => ({
     promptId: row.promptId,
     cluster: CLUSTER_LABEL[row.cluster] ?? row.cluster,
     text: row.text,
-    baselineMentioned: flag(row.baselineMentioned),
-    retestMentioned: flag(row.retestMentioned),
-    baselineCited: flag(row.baselineCited),
-    retestCited: flag(row.retestCited),
-    competitors: [...new Set([...row.baselineCompetitors, ...row.retestCompetitors])].join('、') || '无',
+    fromMentioned: flag(row.fromMentioned),
+    toMentioned: flag(row.toMentioned),
+    fromCited: flag(row.fromCited),
+    toCited: flag(row.toCited),
+    competitors: [...new Set([...row.fromCompetitors, ...row.toCompetitors])].join('、') || '无',
   }))
 
   return (
-    <PageFrame title="基线对比复测" description="同一道题在两个轮次里是否提到品牌、是否引用官网。种子数据里，复测比基线多提到了澄川。">
+    <PageFrame title="轮次对比" description="任选两轮，看同一道题有没有提到品牌、有没有引用官网。种子数据用第 0 周和第 4 周做第一对示例。">
       <VStack gap={4}>
         <ErrorBanner message={error} />
+        {fromId && fromId === toId ? <Text color="secondary">两轮选的是同一个。再建一轮，才能看出优化前后的差别。</Text> : null}
         <HStack gap={3} wrap="wrap">
           <Selector
-            label="基线轮次"
-            value={baselineId}
-            options={cycles.filter((cycle) => cycle.kind === 'baseline').map((cycle) => ({ value: cycle.id, label: cycle.name }))}
-            onChange={(value) => setBaselineId(value || '')}
+            label="对照轮次"
+            value={fromId}
+            hasSearch
+            options={cycleOptions(cycles)}
+            onChange={(value) => setFromId(value || '')}
           />
           <Selector
-            label="复测轮次"
-            value={retestId}
-            options={cycles.filter((cycle) => cycle.kind === 'retest').map((cycle) => ({ value: cycle.id, label: cycle.name }))}
-            onChange={(value) => setRetestId(value || '')}
+            label="本轮"
+            value={toId}
+            hasSearch
+            options={cycleOptions(cycles)}
+            onChange={(value) => setToId(value || '')}
           />
         </HStack>
         {report ? (
           <HStack gap={3} wrap="wrap">
-            <RateBlock title={report.baseline?.name ?? '基线'} metrics={report.baseline?.metrics} />
-            <RateBlock title={report.retest?.name ?? '复测'} metrics={report.retest?.metrics} />
+            <RateBlock title={report.from?.name ?? '对照轮次'} metrics={report.from?.metrics} />
+            <RateBlock title={report.to?.name ?? '本轮'} metrics={report.to?.metrics} />
           </HStack>
         ) : null}
         <Table
@@ -95,10 +98,10 @@ export function ComparePage() {
           columns={[
             { key: 'cluster', header: '簇', width: pixel(80) },
             { key: 'text', header: '提示词', width: proportional(2, { minWidth: 220 }) },
-            { key: 'baselineMentioned', header: '基线提及', width: pixel(96) },
-            { key: 'retestMentioned', header: '复测提及', width: pixel(96) },
-            { key: 'baselineCited', header: '基线引用', width: pixel(96) },
-            { key: 'retestCited', header: '复测引用', width: pixel(96) },
+            { key: 'fromMentioned', header: '对照提及', width: pixel(96) },
+            { key: 'toMentioned', header: '本轮提及', width: pixel(96) },
+            { key: 'fromCited', header: '对照引用', width: pixel(96) },
+            { key: 'toCited', header: '本轮引用', width: pixel(96) },
             { key: 'competitors', header: '竞品', width: proportional(1, { minWidth: 140 }) },
           ]}
         />
@@ -124,6 +127,14 @@ function RateBlock({ title, metrics }: { title: string; metrics?: CycleMetrics }
       </VStack>
     </Section>
   )
+}
+
+function cycleOptions(cycles: Cycle[]) {
+  return cycles.map((cycle) => ({
+    value: cycle.id,
+    label: cycle.name,
+    description: CYCLE_KIND_LABEL[cycle.kind] ?? cycle.kind,
+  }))
 }
 
 function flag(value: boolean | null): string {

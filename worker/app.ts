@@ -3,11 +3,12 @@ import { compareCycles, metricsFor } from '../shared/compare.ts'
 import { buildDiagnosis } from '../shared/diagnose.ts'
 import { acceptDraft, channelLabel, isDraftChannel, templateDraft } from '../shared/drafts.ts'
 import { parseAnswer } from '../shared/parseAnswer.ts'
-import { isPlatformId, PLATFORMS } from '../shared/platforms.ts'
+import { isCycleKind, isPlatformId, PLATFORMS } from '../shared/platforms.ts'
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
 import { assertPublicHttpUrl } from '../shared/ssrf.ts'
-import type { Cluster, ContentDraft, Cycle, CycleKind, Diagnosis, DraftPreview, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
+import type { Cluster, ContentDraft, Cycle, Diagnosis, DraftPreview, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
 import {
+  deleteCycle,
   deleteDraft,
   deleteObservation,
   deletePrompt,
@@ -119,8 +120,9 @@ app.get('/api/studios/:id/overview', async (c) => {
     listDiagnoses(c.env.DB, studio.id),
   ])
   const llm = llmConfig(c.env)
-  const baseline = latestCycle(cycles, 'baseline')
-  const retest = latestCycle(cycles, 'retest')
+  const ordered = [...cycles].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const earliest = ordered[0] ?? null
+  const latestCycle = ordered.at(-1) ?? null
   const latest = diagnoses[0]
   const overview: Overview = {
     studio,
@@ -136,11 +138,11 @@ app.get('/api/studios/:id/overview', async (c) => {
         scenario: prompts.filter((item) => item.cluster === 'scenario').length,
       },
     },
-    baseline: baseline
-      ? { id: baseline.id, name: baseline.name, metrics: metricsFor(observations.filter((item) => item.cycleId === baseline.id)) }
+    earliest: earliest
+      ? { id: earliest.id, name: earliest.name, metrics: metricsFor(observations.filter((item) => item.cycleId === earliest.id)) }
       : null,
-    retest: retest
-      ? { id: retest.id, name: retest.name, metrics: metricsFor(observations.filter((item) => item.cycleId === retest.id)) }
+    latest: latestCycle
+      ? { id: latestCycle.id, name: latestCycle.name, metrics: metricsFor(observations.filter((item) => item.cycleId === latestCycle.id)) }
       : null,
     latestDiagnosis: latest
       ? {
@@ -245,7 +247,7 @@ app.post('/api/studios/:id/cycles', async (c) => {
   const name = stringField(body, 'name').trim()
   const kind = stringField(body, 'kind')
   if (name.length < 2 || name.length > 40) throw new HttpError(400, '轮次名称需要 2 到 40 个字')
-  if (kind !== 'baseline' && kind !== 'retest') throw new HttpError(400, '轮次类型只能是基线或复测')
+  if (!isCycleKind(kind)) throw new HttpError(400, '轮次类型只能是基线、复测或自定义')
   const cycle: Cycle = {
     id: crypto.randomUUID(),
     studioId: studio.id,
@@ -255,6 +257,12 @@ app.post('/api/studios/:id/cycles', async (c) => {
   }
   await insertCycle(c.env.DB, cycle)
   return c.json({ cycle }, 201)
+})
+
+app.delete('/api/studios/:id/cycles/:cycleId', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  await deleteCycle(c.env.DB, studio.id, c.req.param('cycleId'))
+  return c.json({ ok: true })
 })
 
 app.get('/api/studios/:id/observations', async (c) => {
@@ -537,9 +545,10 @@ app.get('/api/studios/:id/compare', async (c) => {
     listObservations(c.env.DB, studio.id),
     listCycles(c.env.DB, studio.id),
   ])
-  const baseline = await resolveCycle(c.env.DB, studio.id, cycles, 'baseline', c.req.query('baseline'))
-  const retest = await resolveCycle(c.env.DB, studio.id, cycles, 'retest', c.req.query('retest'))
-  return c.json(compareCycles(prompts, observations, baseline, retest))
+  const ordered = [...cycles].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const from = await pickCycle(c.env.DB, studio.id, c.req.query('from') || c.req.query('baseline'), ordered[0] ?? null)
+  const to = await pickCycle(c.env.DB, studio.id, c.req.query('to') || c.req.query('retest'), ordered.at(-1) ?? null)
+  return c.json(compareCycles(prompts, observations, from, to))
 })
 
 app.all('/api/*', (c) => c.json({ error: '没有这个接口' }, 404))
@@ -549,14 +558,9 @@ app.all('*', async (c) => {
   return c.text('CitePilot API')
 })
 
-function latestCycle(cycles: Cycle[], kind: CycleKind): Cycle | null {
-  const matches = cycles.filter((item) => item.kind === kind)
-  return matches.at(-1) ?? null
-}
-
-async function resolveCycle(db: D1Database, studioId: string, cycles: Cycle[], kind: CycleKind, requested?: string): Promise<Cycle | null> {
+async function pickCycle(db: D1Database, studioId: string, requested: string | undefined, fallback: Cycle | null): Promise<Cycle | null> {
   if (requested) return mustCycle(db, studioId, requested)
-  return latestCycle(cycles, kind)
+  return fallback
 }
 
 async function fetchOptional(url: string, maxBytes: number) {

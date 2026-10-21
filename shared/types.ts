@@ -1,5 +1,5 @@
 export type Cluster = 'brand' | 'category' | 'comparison' | 'scenario'
-export type CycleKind = 'baseline' | 'retest'
+export type CycleKind = 'baseline' | 'retest' | 'custom'
 export type Sentiment = 'positive' | 'neutral' | 'negative' | 'mixed'
 export type ParserSource = 'rules' | 'deepseek'
 export type PromptSource = 'seed' | 'template' | 'llm' | 'manual'
@@ -138,17 +138,17 @@ export interface CompareRow {
   promptId: string
   text: string
   cluster: Cluster
-  baselineMentioned: boolean | null
-  retestMentioned: boolean | null
-  baselineCited: boolean | null
-  retestCited: boolean | null
-  baselineCompetitors: string[]
-  retestCompetitors: string[]
+  fromMentioned: boolean | null
+  toMentioned: boolean | null
+  fromCited: boolean | null
+  toCited: boolean | null
+  fromCompetitors: string[]
+  toCompetitors: string[]
 }
 
 export interface CompareReport {
-  baseline: { id: string; name: string; kind: CycleKind; metrics: CycleMetrics } | null
-  retest: { id: string; name: string; kind: CycleKind; metrics: CycleMetrics } | null
+  from: { id: string; name: string; kind: CycleKind; metrics: CycleMetrics } | null
+  to: { id: string; name: string; kind: CycleKind; metrics: CycleMetrics } | null
   rows: CompareRow[]
 }
 
@@ -161,8 +161,8 @@ export interface Overview {
     diagnoses: number
     byCluster: Record<Cluster, number>
   }
-  baseline: { id: string; name: string; metrics: CycleMetrics } | null
-  retest: { id: string; name: string; metrics: CycleMetrics } | null
+  earliest: { id: string; name: string; metrics: CycleMetrics } | null
+  latest: { id: string; name: string; metrics: CycleMetrics } | null
   latestDiagnosis: {
     id: string
     url: string

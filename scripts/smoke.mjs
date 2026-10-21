@@ -26,11 +26,33 @@ async function main() {
   await json(`/api/studios/${studio.id}/observations/${created.observation.id}`, { method: 'DELETE' })
   const generated = await json(`/api/studios/${studio.id}/prompts/generate`, { method: 'POST', body: '{}' })
   if (!Array.isArray(generated.prompts)) throw new Error('generate did not return prompts')
-  const compare = await json(`/api/studios/${studio.id}/compare`)
-  if (!compare.baseline || !compare.retest) throw new Error('compare missing cycles')
-  if ((compare.retest.metrics?.mentionRate ?? 0) < (compare.baseline.metrics?.mentionRate ?? 1)) {
+  const compare = await json(`/api/studios/${studio.id}/compare?from=cycle-baseline&to=cycle-retest`)
+  if (!compare.from || !compare.to) throw new Error('compare missing cycles')
+  if (compare.from.name !== '第 0 周基线' || compare.to.name !== '第 4 周复测') {
+    throw new Error('seed pair should still be selectable by id')
+  }
+  if ((compare.to.metrics?.mentionRate ?? 0) < (compare.from.metrics?.mentionRate ?? 1)) {
     throw new Error('seeded retest should not mention the brand less often than baseline')
   }
+  const custom = await json(`/api/studios/${studio.id}/cycles`, {
+    method: 'POST',
+    body: JSON.stringify({ name: '冒烟第2轮', kind: 'custom' }),
+  })
+  if (custom.cycle?.kind !== 'custom') throw new Error('custom cycle was not created')
+  const customObservation = await json(`/api/studios/${studio.id}/observations`, {
+    method: 'POST',
+    body: JSON.stringify({
+      promptId: prompt.id,
+      cycleId: custom.cycle.id,
+      platform: 'deepseek',
+      answerText: '澄川智能体工场可以先帮团队整理故障手册。公开说明见 https://example.com ，做法比较专业。',
+    }),
+  })
+  const customCompare = await json(`/api/studios/${studio.id}/compare?from=cycle-baseline&to=${custom.cycle.id}`)
+  if (customCompare.to?.id !== custom.cycle.id) throw new Error('compare did not use the custom cycle')
+  if ((customCompare.to.metrics?.mentionRate ?? 0) <= 0) throw new Error('custom cycle mention rate missing')
+  await json(`/api/studios/${studio.id}/observations/${customObservation.observation.id}`, { method: 'DELETE' })
+  await json(`/api/studios/${studio.id}/cycles/${custom.cycle.id}`, { method: 'DELETE' })
   const generatedDraft = await json(`/api/studios/${studio.id}/drafts/generate`, {
     method: 'POST',
     body: JSON.stringify({ channel: 'product-promo', promptId: prompt.id }),
@@ -57,8 +79,8 @@ async function main() {
     generated: generated.prompts.length,
     source: generated.source,
     llm: health.llm,
-    baselineMention: compare.baseline.metrics.mentionRate,
-    retestMention: compare.retest.metrics.mentionRate,
+    baselineMention: compare.from.metrics.mentionRate,
+    retestMention: compare.to.metrics.mentionRate,
     draftChannel: preview.channel,
     draftSource: preview.source,
   }))

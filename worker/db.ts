@@ -223,6 +223,16 @@ export async function insertCycle(db: D1Database, cycle: Cycle): Promise<void> {
     .run()
 }
 
+export async function deleteCycle(db: D1Database, studioId: string, cycleId: string): Promise<void> {
+  const row = await db
+    .prepare('SELECT COUNT(*) AS total FROM observations WHERE studio_id = ? AND cycle_id = ?')
+    .bind(studioId, cycleId)
+    .first<{ total: number }>()
+  if ((row?.total ?? 0) > 0) throw new HttpError(409, '这个轮次已有监测记录。先删掉记录，再删轮次。')
+  const result = await db.prepare('DELETE FROM cycles WHERE id = ? AND studio_id = ?').bind(cycleId, studioId).run()
+  if ((result.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这个轮次')
+}
+
 export async function listObservations(db: D1Database, studioId: string): Promise<Observation[]> {
   const { results } = await db
     .prepare(

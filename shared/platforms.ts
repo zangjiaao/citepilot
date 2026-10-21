@@ -13,6 +13,16 @@ export const PLATFORMS = [
 
 export type PlatformId = (typeof PLATFORMS)[number]['id']
 
+export const CYCLE_KIND_LABEL: Record<string, string> = {
+  baseline: '基线',
+  retest: '复测',
+  custom: '自定义',
+}
+
+export function isCycleKind(value: string): value is 'baseline' | 'retest' | 'custom' {
+  return value === 'baseline' || value === 'retest' || value === 'custom'
+}
+
 export const CLUSTER_LABEL: Record<string, string> = {
   brand: '品牌',
   category: '品类',

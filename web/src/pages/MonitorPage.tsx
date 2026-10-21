@@ -7,7 +7,7 @@ import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { VStack } from '@astryxdesign/core/VStack'
-import { PLATFORMS, SENTIMENT_LABEL, platformLabel } from '../../../shared/platforms.ts'
+import { CYCLE_KIND_LABEL, PLATFORMS, SENTIMENT_LABEL, isCycleKind, platformLabel } from '../../../shared/platforms.ts'
 import type { Cycle, CycleKind, Observation, Prompt } from '../../../shared/types.ts'
 import { api } from '../api'
 import { formatTime } from '../format'
@@ -37,7 +37,7 @@ export function MonitorPage() {
   const [platform, setPlatform] = useState('deepseek')
   const [answer, setAnswer] = useState('')
   const [cycleName, setCycleName] = useState('')
-  const [cycleKind, setCycleKind] = useState<CycleKind>('retest')
+  const [cycleKind, setCycleKind] = useState<CycleKind>('custom')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
@@ -52,7 +52,7 @@ export function MonitorPage() {
     setCycles(cyclePayload.cycles)
     setObservations(observationPayload.observations)
     setPromptId((current) => current || promptPayload.prompts[0]?.id || '')
-    setCycleId((current) => current || cyclePayload.cycles[0]?.id || '')
+    setCycleId((current) => (current && cyclePayload.cycles.some((cycle) => cycle.id === current) ? current : cyclePayload.cycles.at(-1)?.id || ''))
   }
 
   useEffect(() => {
@@ -93,6 +93,18 @@ export function MonitorPage() {
     await load(studioId)
   }
 
+  const removeCycle = async (id: string) => {
+    if (!studioId || !window.confirm('删除这个还没有监测记录的轮次？')) return
+    setError('')
+    try {
+      await api(`/api/studios/${studioId}/cycles/${id}`, { method: 'DELETE' })
+      if (cycleId === id) setCycleId('')
+      await load(studioId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除轮次失败')
+    }
+  }
+
   const remove = async (id: string) => {
     if (!studioId || !window.confirm('删除这条粘贴记录？')) return
     await api(`/api/studios/${studioId}/observations/${id}`, { method: 'DELETE' })
@@ -113,7 +125,7 @@ export function MonitorPage() {
   }))
 
   return (
-    <PageFrame title="监测" description="选一道题和一个平台，把回答引擎的原文粘贴进来。解析只看文本，不访问登录后的对话页面。">
+    <PageFrame title="监测" description="选任意一轮、一道题和一个平台，把回答引擎的原文粘贴进来。解析只看文本，不访问登录后的对话页面。">
       <VStack gap={4}>
         <ErrorBanner message={error} />
         {notice ? <InfoBanner title="这条回答已记下" description={notice} /> : null}
@@ -126,7 +138,7 @@ export function MonitorPage() {
               options={cycles.map((cycle) => ({
                 value: cycle.id,
                 label: cycle.name,
-                description: cycle.kind === 'baseline' ? '基线' : '复测',
+                description: CYCLE_KIND_LABEL[cycle.kind] ?? cycle.kind,
               }))}
               onChange={(value) => setCycleId(value || '')}
             />
@@ -155,22 +167,53 @@ export function MonitorPage() {
           <Button label="解析并保存" variant="primary" type="submit" isLoading={saving} isDisabled={answer.trim().length < 10} />
         </VStack>
         <VStack gap={2}>
-          <Text type="label">新轮次</Text>
+          <Text type="label">轮次</Text>
+          <Text color="secondary">名称自己定。第一轮可以用基线和复测，之后每次优化都新建一个自定义轮次。</Text>
           <FormLayout direction="horizontal">
-            <TextInput label="名称" value={cycleName} onChange={setCycleName} placeholder="例如第 3 周抽查" />
+            <TextInput label="名称" value={cycleName} onChange={setCycleName} placeholder="例如第 2 轮：补了 FAQ 之后" />
             <Selector
               label="类型"
               value={cycleKind}
               options={[
+                { value: 'custom', label: '自定义' },
                 { value: 'baseline', label: '基线' },
                 { value: 'retest', label: '复测' },
               ]}
               onChange={(value) => {
-                if (value === 'baseline' || value === 'retest') setCycleKind(value)
+                if (value && isCycleKind(value)) setCycleKind(value)
               }}
             />
           </FormLayout>
           <Button label="添加轮次" variant="secondary" onClick={() => void addCycle()} isDisabled={cycleName.trim().length < 2} />
+          <Table
+            data={cycles.map((cycle) => ({
+              id: cycle.id,
+              name: cycle.name,
+              kind: CYCLE_KIND_LABEL[cycle.kind] ?? cycle.kind,
+              count: String(observations.filter((item) => item.cycleId === cycle.id).length),
+            }))}
+            idKey="id"
+            density="compact"
+            columns={[
+              { key: 'name', header: '名称', width: proportional(2, { minWidth: 160 }) },
+              { key: 'kind', header: '类型', width: pixel(100) },
+              { key: 'count', header: '记录', width: pixel(80) },
+              {
+                key: 'id',
+                header: '操作',
+                width: pixel(88),
+                renderCell: (row) => (
+                  <Button
+                    label="删除"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void removeCycle(row.id)}
+                    isDisabled={observations.some((item) => item.cycleId === row.id)}
+                  />
+                ),
+              },
+            ]}
+          />
         </VStack>
         <Table
           data={rows}

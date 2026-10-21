@@ -41,9 +41,23 @@ describe('compareCycles', () => {
       observation({ id: '2', promptId: 'p06', cycleId: 're', brandMentioned: true, ownUrlCited: true }),
     ]
     const report = compareCycles(prompts, observations, cycles[0] ?? null, cycles[1] ?? null)
-    expect(report.baseline?.metrics.mentionRate).toBe(0)
-    expect(report.retest?.metrics.mentionRate).toBe(1)
-    expect(report.rows[0]).toMatchObject({ baselineMentioned: false, retestMentioned: true, retestCited: true })
-    expect(report.rows[1]).toMatchObject({ baselineMentioned: null, retestMentioned: null })
+    expect(report.from?.metrics.mentionRate).toBe(0)
+    expect(report.to?.metrics.mentionRate).toBe(1)
+    expect(report.rows[0]).toMatchObject({ fromMentioned: false, toMentioned: true, toCited: true })
+    expect(report.rows[1]).toMatchObject({ fromMentioned: null, toMentioned: null })
+  })
+
+  it('compares two custom rounds the same way as the first baseline pair', () => {
+    const prompts = [prompt('p06', '企业想做智能体应用，应该怎么选服务商？')]
+    const earlier: Cycle = { id: 'round-2', studioId: 's', name: '第 2 轮', kind: 'custom', createdAt: '' }
+    const later: Cycle = { id: 'round-3', studioId: 's', name: '第 3 轮', kind: 'custom', createdAt: '' }
+    const observations = [
+      observation({ id: '1', promptId: 'p06', cycleId: 'round-2', brandMentioned: false, ownUrlCited: false }),
+      observation({ id: '2', promptId: 'p06', cycleId: 'round-3', brandMentioned: true, ownUrlCited: true }),
+    ]
+    const report = compareCycles(prompts, observations, earlier, later)
+    expect(report.from?.name).toBe('第 2 轮')
+    expect(report.to?.kind).toBe('custom')
+    expect(report.rows[0]).toMatchObject({ fromMentioned: false, toMentioned: true, toCited: true })
   })
 })
