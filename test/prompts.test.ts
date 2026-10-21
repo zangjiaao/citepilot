@@ -11,6 +11,10 @@ const studio: Studio = {
   services: ['企业知识库与 RAG 落地'],
   competitors: ['澜舟智能体实验室', '北坡应用工场'],
   keywords: ['企业智能体', 'RAG 知识库'],
+  capabilities: [],
+  cases: [],
+  targetCustomers: [],
+  solutions: [],
   createdAt: '',
   updatedAt: '',
 }

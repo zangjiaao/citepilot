@@ -19,6 +19,10 @@ interface Draft {
   services: string
   competitors: string
   keywords: string
+  capabilities: string
+  cases: string
+  targetCustomers: string
+  solutions: string
 }
 
 const emptyDraft: Draft = {
@@ -28,6 +32,10 @@ const emptyDraft: Draft = {
   services: '',
   competitors: '',
   keywords: '',
+  capabilities: '',
+  cases: '',
+  targetCustomers: '',
+  solutions: '',
 }
 
 export function StudioPage() {
@@ -56,6 +64,10 @@ export function StudioPage() {
       services: splitList(draft.services),
       competitors: splitList(draft.competitors),
       keywords: splitList(draft.keywords),
+      capabilities: splitList(draft.capabilities),
+      cases: splitList(draft.cases),
+      targetCustomers: splitList(draft.targetCustomers),
+      solutions: splitList(draft.solutions),
     }
     try {
       if (creating || !studio) {
@@ -77,7 +89,7 @@ export function StudioPage() {
   return (
     <PageFrame
       title="工作室档案"
-      description="名称、官网、定位、服务、竞品和关键词会用来出题，也会用来判断回答里有没有提到你。"
+      description="名称、官网、定位、服务、竞品和关键词会用来出题，也会用来判断回答里有没有提到你。能力、案例、目标客户和解决方案会用来起草可引用的内容。"
       actions={
         <Button
           label="新建工作室"
@@ -108,6 +120,10 @@ export function StudioPage() {
           <TextArea label="服务" description="一行一项。" value={draft.services} onChange={update('services')} rows={4} width="100%" />
           <TextArea label="竞品" description="一行一个名称，监测时按这些名字查找。" value={draft.competitors} onChange={update('competitors')} rows={4} width="100%" />
           <TextArea label="关键词" description="逗号或换行分隔。" value={draft.keywords} onChange={update('keywords')} rows={3} width="100%" />
+          <TextArea label="能力" description="一行一项。内容起草会把这些句子写成可被引用的事实。" value={draft.capabilities} onChange={update('capabilities')} rows={4} width="100%" />
+          <TextArea label="案例" description="一行一个可公开的例子。不要写无法核对的客户名或效果数字。" value={draft.cases} onChange={update('cases')} rows={4} width="100%" />
+          <TextArea label="目标客户" description="一行一类客户。" value={draft.targetCustomers} onChange={update('targetCustomers')} rows={3} width="100%" />
+          <TextArea label="解决方案" description="一行一项。产品宣传和官网长文会按这些范围来写。" value={draft.solutions} onChange={update('solutions')} rows={4} width="100%" />
         </FormLayout>
         <Button label={creating || !studio ? '创建' : '保存档案'} variant="primary" type="submit" isLoading={saving} />
         {studio && !creating ? (
@@ -128,5 +144,9 @@ function fromStudio(studio: Studio): Draft {
     services: joinLines(studio.services),
     competitors: joinLines(studio.competitors),
     keywords: joinLines(studio.keywords),
+    capabilities: joinLines(studio.capabilities),
+    cases: joinLines(studio.cases),
+    targetCustomers: joinLines(studio.targetCustomers),
+    solutions: joinLines(studio.solutions),
   }
 }

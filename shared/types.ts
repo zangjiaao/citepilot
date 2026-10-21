@@ -13,8 +13,52 @@ export interface Studio {
   services: string[]
   competitors: string[]
   keywords: string[]
+  capabilities: string[]
+  cases: string[]
+  targetCustomers: string[]
+  solutions: string[]
   createdAt: string
   updatedAt: string
+}
+
+export type DraftChannel =
+  | 'site-article'
+  | 'faq'
+  | 'wechat'
+  | 'xiaohongshu'
+  | 'linkedin'
+  | 'social-short'
+  | 'product-promo'
+
+export type DraftSource = 'template' | 'deepseek'
+
+export interface DraftBrief {
+  title: string
+  body: string
+  citeSentences: string[]
+  urlHint: string
+}
+
+export interface DraftPreview extends DraftBrief {
+  channel: DraftChannel
+  promptId: string | null
+  promptText: string
+  diagnosisId: string | null
+  gapId: string | null
+  gapLabel: string
+  source: DraftSource
+}
+
+export interface ContentDraft extends DraftBrief {
+  id: string
+  studioId: string
+  channel: DraftChannel
+  promptId: string | null
+  promptText: string
+  diagnosisId: string | null
+  gapLabel: string
+  source: DraftSource
+  createdAt: string
 }
 
 export interface Prompt {

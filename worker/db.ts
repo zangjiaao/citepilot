@@ -1,4 +1,4 @@
-import type { CheckItem, Cycle, CycleKind, Diagnosis, Observation, Prompt, Sentiment, Studio } from '../shared/types.ts'
+import type { CheckItem, ContentDraft, Cycle, CycleKind, Diagnosis, Observation, Prompt, Sentiment, Studio } from '../shared/types.ts'
 import { HttpError } from './errors.ts'
 
 interface StudioRow {
@@ -9,8 +9,28 @@ interface StudioRow {
   services: string
   competitors: string
   keywords: string
+  capabilities: string
+  cases: string
+  target_customers: string
+  solutions: string
   created_at: string
   updated_at: string
+}
+
+interface DraftRow {
+  id: string
+  studio_id: string
+  channel: ContentDraft['channel']
+  title: string
+  body: string
+  cite_sentences: string
+  url_hint: string
+  prompt_id: string | null
+  prompt_text: string
+  diagnosis_id: string | null
+  gap_label: string
+  source: ContentDraft['source']
+  created_at: string
 }
 
 interface PromptRow {
@@ -85,8 +105,10 @@ export async function mustStudio(db: D1Database, id: string): Promise<Studio> {
 export async function insertStudio(db: D1Database, studio: Studio): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO studios (id, name, website, positioning, services, competitors, keywords, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO studios (
+         id, name, website, positioning, services, competitors, keywords,
+         capabilities, cases, target_customers, solutions, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       studio.id,
@@ -96,6 +118,10 @@ export async function insertStudio(db: D1Database, studio: Studio): Promise<void
       JSON.stringify(studio.services),
       JSON.stringify(studio.competitors),
       JSON.stringify(studio.keywords),
+      JSON.stringify(studio.capabilities),
+      JSON.stringify(studio.cases),
+      JSON.stringify(studio.targetCustomers),
+      JSON.stringify(studio.solutions),
       studio.createdAt,
       studio.updatedAt,
     )
@@ -106,7 +132,8 @@ export async function updateStudio(db: D1Database, studio: Studio): Promise<void
   const result = await db
     .prepare(
       `UPDATE studios
-       SET name = ?, website = ?, positioning = ?, services = ?, competitors = ?, keywords = ?, updated_at = ?
+       SET name = ?, website = ?, positioning = ?, services = ?, competitors = ?, keywords = ?,
+           capabilities = ?, cases = ?, target_customers = ?, solutions = ?, updated_at = ?
        WHERE id = ?`,
     )
     .bind(
@@ -116,6 +143,10 @@ export async function updateStudio(db: D1Database, studio: Studio): Promise<void
       JSON.stringify(studio.services),
       JSON.stringify(studio.competitors),
       JSON.stringify(studio.keywords),
+      JSON.stringify(studio.capabilities),
+      JSON.stringify(studio.cases),
+      JSON.stringify(studio.targetCustomers),
+      JSON.stringify(studio.solutions),
       studio.updatedAt,
       studio.id,
     )
@@ -276,6 +307,45 @@ export async function insertDiagnosis(db: D1Database, diagnosis: Diagnosis): Pro
     .run()
 }
 
+export async function listDrafts(db: D1Database, studioId: string): Promise<ContentDraft[]> {
+  const { results } = await db
+    .prepare('SELECT * FROM drafts WHERE studio_id = ? ORDER BY created_at DESC LIMIT 50')
+    .bind(studioId)
+    .all<DraftRow>()
+  return results.map(mapDraft)
+}
+
+export async function insertDraft(db: D1Database, draft: ContentDraft): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO drafts (
+         id, studio_id, channel, title, body, cite_sentences, url_hint,
+         prompt_id, prompt_text, diagnosis_id, gap_label, source, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      draft.id,
+      draft.studioId,
+      draft.channel,
+      draft.title,
+      draft.body,
+      JSON.stringify(draft.citeSentences),
+      draft.urlHint,
+      draft.promptId,
+      draft.promptText,
+      draft.diagnosisId,
+      draft.gapLabel,
+      draft.source,
+      draft.createdAt,
+    )
+    .run()
+}
+
+export async function deleteDraft(db: D1Database, studioId: string, draftId: string): Promise<void> {
+  const result = await db.prepare('DELETE FROM drafts WHERE id = ? AND studio_id = ?').bind(draftId, studioId).run()
+  if ((result.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这篇草稿')
+}
+
 function mapStudio(row: StudioRow): Studio {
   return {
     id: row.id,
@@ -285,8 +355,30 @@ function mapStudio(row: StudioRow): Studio {
     services: parseStringArray(row.services),
     competitors: parseStringArray(row.competitors),
     keywords: parseStringArray(row.keywords),
+    capabilities: parseStringArray(row.capabilities),
+    cases: parseStringArray(row.cases),
+    targetCustomers: parseStringArray(row.target_customers),
+    solutions: parseStringArray(row.solutions),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function mapDraft(row: DraftRow): ContentDraft {
+  return {
+    id: row.id,
+    studioId: row.studio_id,
+    channel: row.channel,
+    title: row.title,
+    body: row.body,
+    citeSentences: parseStringArray(row.cite_sentences),
+    urlHint: row.url_hint,
+    promptId: row.prompt_id,
+    promptText: row.prompt_text,
+    diagnosisId: row.diagnosis_id,
+    gapLabel: row.gap_label,
+    source: row.source,
+    createdAt: row.created_at,
   }
 }
 

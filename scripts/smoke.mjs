@@ -31,6 +31,25 @@ async function main() {
   if ((compare.retest.metrics?.mentionRate ?? 0) < (compare.baseline.metrics?.mentionRate ?? 1)) {
     throw new Error('seeded retest should not mention the brand less often than baseline')
   }
+  const generatedDraft = await json(`/api/studios/${studio.id}/drafts/generate`, {
+    method: 'POST',
+    body: JSON.stringify({ channel: 'product-promo', promptId: prompt.id }),
+  })
+  const preview = generatedDraft.draft
+  if (preview?.channel !== 'product-promo') throw new Error('draft channel missing')
+  if (!preview.title || !preview.body?.includes(studio.name) || (preview.citeSentences?.length ?? 0) < 2) {
+    throw new Error('draft generate returned an empty product promo')
+  }
+  if (!String(preview.urlHint).includes('example.com')) throw new Error('draft url hint missing site')
+  if (!health.llm.enabled && preview.source !== 'template') throw new Error(`expected template draft, got ${preview.source}`)
+  const stored = await json(`/api/studios/${studio.id}/drafts`, {
+    method: 'POST',
+    body: JSON.stringify(preview),
+  })
+  if (!stored.draft?.id) throw new Error('draft save failed')
+  const listed = await json(`/api/studios/${studio.id}/drafts`)
+  if (!listed.drafts?.some((item) => item.id === stored.draft.id)) throw new Error('saved draft missing from list')
+  await json(`/api/studios/${studio.id}/drafts/${stored.draft.id}`, { method: 'DELETE' })
   console.log(JSON.stringify({
     ok: true,
     studio: studio.name,
@@ -40,6 +59,8 @@ async function main() {
     llm: health.llm,
     baselineMention: compare.baseline.metrics.mentionRate,
     retestMention: compare.retest.metrics.mentionRate,
+    draftChannel: preview.channel,
+    draftSource: preview.source,
   }))
 }
 

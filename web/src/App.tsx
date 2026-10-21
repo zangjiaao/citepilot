@@ -14,6 +14,7 @@ const NAV = [
   { to: '/prompts', label: '题库', icon: 'viewColumns' },
   { to: '/monitor', label: '监测', icon: 'search' },
   { to: '/diagnosis', label: '诊断', icon: 'check' },
+  { to: '/drafts', label: '内容起草', icon: 'copy' },
   { to: '/compare', label: '对比', icon: 'arrowsUpDown' },
 ] as const
 

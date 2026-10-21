@@ -1,21 +1,25 @@
 import { Hono } from 'hono'
 import { compareCycles, metricsFor } from '../shared/compare.ts'
 import { buildDiagnosis } from '../shared/diagnose.ts'
+import { acceptDraft, channelLabel, isDraftChannel, templateDraft } from '../shared/drafts.ts'
 import { parseAnswer } from '../shared/parseAnswer.ts'
 import { isPlatformId, PLATFORMS } from '../shared/platforms.ts'
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
 import { assertPublicHttpUrl } from '../shared/ssrf.ts'
-import type { Cluster, Cycle, CycleKind, Diagnosis, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
+import type { Cluster, ContentDraft, Cycle, CycleKind, Diagnosis, DraftPreview, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
 import {
+  deleteDraft,
   deleteObservation,
   deletePrompt,
   insertCycle,
   insertDiagnosis,
+  insertDraft,
   insertObservation,
   insertPrompts,
   insertStudio,
   listCycles,
   listDiagnoses,
+  listDrafts,
   listObservations,
   listPrompts,
   listStudios,
@@ -36,7 +40,7 @@ app.onError((error, c) => {
     return c.json({ error: error.message }, status)
   }
   const message = error instanceof Error ? error.message : String(error)
-  if (/no such table/i.test(message)) {
+  if (/no such table|no such column/i.test(message)) {
     return c.json({ error: '本地数据库还没有迁移。请运行 npm run db:migrate 后刷新。' }, 503)
   }
   console.error(JSON.stringify({ message: 'request failed', path: c.req.path, error: message }))
@@ -391,6 +395,141 @@ app.post('/api/studios/:id/diagnoses', async (c) => {
   return c.json({ diagnosis }, 201)
 })
 
+app.get('/api/studios/:id/drafts', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  return c.json({ drafts: await listDrafts(c.env.DB, studio.id) })
+})
+
+app.post('/api/studios/:id/drafts/generate', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const record = asRecord(await readJson(c))
+  const channelRaw = stringField(record, 'channel').trim()
+  if (!isDraftChannel(channelRaw)) throw new HttpError(400, '不认识这个渠道')
+  const promptId = optionalId(record.promptId)
+  const diagnosisId = optionalId(record.diagnosisId)
+  const gapId = optionalId(record.gapId)
+  if (gapId && !diagnosisId) throw new HttpError(400, '要指定诊断记录，才能关联缺口')
+
+  let promptText = ''
+  if (promptId) {
+    const prompt = (await listPrompts(c.env.DB, studio.id)).find((item) => item.id === promptId)
+    if (!prompt) throw new HttpError(404, '没有找到这道题')
+    promptText = prompt.text
+  }
+  let gapLabel = ''
+  let gapDetail = ''
+  if (diagnosisId) {
+    const diagnosis = (await listDiagnoses(c.env.DB, studio.id)).find((item) => item.id === diagnosisId)
+    if (!diagnosis) throw new HttpError(404, '没有找到这次诊断')
+    if (gapId) {
+      const gap = diagnosis.checklist.find((item) => item.id === gapId && item.status !== 'pass')
+      if (!gap) throw new HttpError(400, '这个检查项没有缺口，或不是这次诊断里的')
+      gapLabel = gap.label
+      gapDetail = gap.detail
+    }
+  }
+
+  const context = { studio, channel: channelRaw, promptText, gapLabel, gapDetail }
+  let brief = templateDraft(context)
+  let source: DraftPreview['source'] = 'template'
+  if (llmConfig(c.env).enabled) {
+    try {
+      const raw = await deepseekJson(
+        c.env,
+        '你是 GEO/AEO 内容编辑。只根据用户给出的工作室档案改写草稿，不要新增客户名、金额、百分比或未提供的案例。正文必须出现工作室名称。只输出 JSON：{"title":"","body":"","citeSentences":["",""],"urlHint":""}。citeSentences 是 3 到 5 句可以单独被回答引擎引用的话，每句都包含工作室名称。urlHint 必须包含给定官网主机名，并说明内容应该落在哪个地址。',
+        `渠道：${channelLabel(channelRaw)}\n官网：${studio.website}\n档案：${JSON.stringify({
+          name: studio.name,
+          positioning: studio.positioning,
+          capabilities: studio.capabilities,
+          cases: studio.cases,
+          targetCustomers: studio.targetCustomers,
+          solutions: studio.solutions,
+          services: studio.services,
+        })}\n题目：${promptText || '无'}\n诊断缺口：${gapLabel || '无'} ${gapDetail}\n模板草稿：${JSON.stringify(brief)}\n请按该渠道的写法重写，保留事实。`,
+        0.4,
+      )
+      const accepted = acceptDraft(raw, studio.name)
+      if (accepted) {
+        const host = new URL(studio.website).host
+        if (!accepted.urlHint.includes(host)) accepted.urlHint = brief.urlHint
+        brief = accepted
+        source = 'deepseek'
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(JSON.stringify({ message: 'draft text fell back', error: message }))
+    }
+  }
+
+  const draft: DraftPreview = {
+    ...brief,
+    channel: channelRaw,
+    source,
+    promptId: promptId || null,
+    promptText,
+    diagnosisId: diagnosisId || null,
+    gapId: gapId || null,
+    gapLabel,
+  }
+  console.log(JSON.stringify({ message: 'draft generated', channel: channelRaw, source }))
+  return c.json({ draft })
+})
+
+app.post('/api/studios/:id/drafts', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const record = asRecord(await readJson(c))
+  const channelRaw = stringField(record, 'channel').trim()
+  if (!isDraftChannel(channelRaw)) throw new HttpError(400, '不认识这个渠道')
+  const title = stringField(record, 'title').trim()
+  const body = stringField(record, 'body').trim()
+  const urlHint = stringField(record, 'urlHint').trim()
+  const citeSentences = stringList(record.citeSentences, 6, 180)
+  if (title.length < 4 || title.length > 80) throw new HttpError(400, '标题需要 4 到 80 个字')
+  if (body.length < 40 || body.length > 8000) throw new HttpError(400, '正文太短或太长')
+  if (citeSentences.length < 2) throw new HttpError(400, '至少保留两句可引用的话')
+  if (urlHint.length < 8 || urlHint.length > 300) throw new HttpError(400, '建议网址需要写清落在哪一页')
+  const source = optionalString(record, 'source')
+  if (source !== 'template' && source !== 'deepseek') throw new HttpError(400, '草稿来源不正确')
+
+  const promptId = optionalId(record.promptId)
+  let promptText = optionalString(record, 'promptText').trim().slice(0, 200)
+  if (promptId) {
+    const prompt = (await listPrompts(c.env.DB, studio.id)).find((item) => item.id === promptId)
+    if (!prompt) throw new HttpError(404, '没有找到这道题')
+    if (!promptText) promptText = prompt.text
+  }
+  const diagnosisId = optionalId(record.diagnosisId)
+  if (diagnosisId) {
+    const diagnosis = (await listDiagnoses(c.env.DB, studio.id)).find((item) => item.id === diagnosisId)
+    if (!diagnosis) throw new HttpError(404, '没有找到这次诊断')
+  }
+  const gapLabel = optionalString(record, 'gapLabel').trim().slice(0, 80)
+
+  const draft: ContentDraft = {
+    id: crypto.randomUUID(),
+    studioId: studio.id,
+    channel: channelRaw,
+    title,
+    body,
+    citeSentences,
+    urlHint,
+    promptId: promptId || null,
+    promptText,
+    diagnosisId: diagnosisId || null,
+    gapLabel,
+    source,
+    createdAt: new Date().toISOString(),
+  }
+  await insertDraft(c.env.DB, draft)
+  return c.json({ draft }, 201)
+})
+
+app.delete('/api/studios/:id/drafts/:draftId', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  await deleteDraft(c.env.DB, studio.id, c.req.param('draftId'))
+  return c.json({ ok: true })
+})
+
 app.get('/api/studios/:id/compare', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
   const [prompts, observations, cycles] = await Promise.all([
@@ -462,7 +601,22 @@ function studioFromBody(body: unknown): Omit<Studio, 'id' | 'createdAt' | 'updat
     services: stringList(record.services, 20, 80),
     competitors: stringList(record.competitors, 20, 80),
     keywords: stringList(record.keywords, 20, 40),
+    capabilities: optionalStringList(record.capabilities, 12, 120),
+    cases: optionalStringList(record.cases, 8, 200),
+    targetCustomers: optionalStringList(record.targetCustomers, 12, 80),
+    solutions: optionalStringList(record.solutions, 12, 120),
   }
+}
+
+function optionalStringList(value: unknown, maxItems: number, maxLength: number): string[] {
+  if (value === undefined || value === null) return []
+  return stringList(value, maxItems, maxLength)
+}
+
+function optionalId(value: unknown): string {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value !== 'string') throw new HttpError(400, '关联字段不正确')
+  return value.trim()
 }
 
 function stringList(value: unknown, maxItems: number, maxLength: number): string[] {
