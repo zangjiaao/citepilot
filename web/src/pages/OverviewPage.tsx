@@ -5,6 +5,7 @@ import { Grid } from '@astryxdesign/core/Grid'
 import { Heading } from '@astryxdesign/core/Heading'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
+import { NEXT_BASELINE_NOTE, PRODUCT_LOOP } from '../../../shared/loop.ts'
 import { PLAYBOOK } from '../../../shared/playbook.ts'
 import { CLUSTER_LABEL } from '../../../shared/platforms.ts'
 import type { Overview } from '../../../shared/types.ts'
@@ -37,7 +38,7 @@ export function OverviewPage() {
   return (
     <PageFrame
       title="GEO/AEO 监测"
-      description="每次抽样建一个轮次，粘贴回答，诊断公开页，再任选两批对比。不登录、不爬取任何对话产品。"
+      description="先做基线监测，再整站和内容分发，过一段时间用同一套题再测，然后与基线对比，看提及和引用有没有抬升。不登录、不爬取任何对话产品。"
     >
       <VStack gap={4}>
         <ErrorBanner message={shellError || error} />
@@ -52,6 +53,18 @@ export function OverviewPage() {
         {llm?.enabled ? (
           <InfoBanner title={`已连接 ${llm.model}`} description="生成题目和诊断建议会优先使用 DeepSeek。模型失败时自动退回模板和规则。" />
         ) : null}
+        <VStack gap={3}>
+          <Heading level={2}>监测循环</Heading>
+          {PRODUCT_LOOP.map((step) => (
+            <VStack key={step.step} gap={1}>
+              <Heading level={3}>
+                {step.step}. {step.title}
+              </Heading>
+              <Text color="secondary">{step.detail}</Text>
+            </VStack>
+          ))}
+          <Text color="secondary">{NEXT_BASELINE_NOTE}</Text>
+        </VStack>
         {overview ? (
           <Grid columns={{ minWidth: 180, max: 4 }} gap={3}>
             <Metric label="题库" value={String(counts?.prompts ?? 0)} detail={clusterDetail(counts?.byCluster)} />
@@ -74,11 +87,9 @@ export function OverviewPage() {
             />
           </Grid>
         ) : null}
-        <Collapsible defaultIsOpen={false} trigger="首次验证剧本（可选）">
+        <Collapsible defaultIsOpen={false} trigger="四周自测（可选）">
           <VStack gap={3}>
-            <Text color="secondary">
-              第一次做验证时可以按这个顺序走一遍。日常监测不用按周：每次抽样新建一个抽查批次，再任选两批对比。
-            </Text>
+            <Text color="secondary">只在第一次验证时用。日常按上面的监测循环，不用按周。</Text>
             {PLAYBOOK.map((step) => (
               <VStack key={step.week} gap={1}>
                 <Heading level={3}>

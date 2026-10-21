@@ -163,7 +163,7 @@ export function DraftsPage() {
   return (
     <PageFrame
       title="内容起草"
-      description="按工作室档案写一版可引用的中文草稿。你审完后自己发布，这里不连接公众号、小红书或任何其他平台。"
+      description="整站诊断之后，在这里起草可引用的稿子。你审完后自己发布，这里不连接公众号、小红书或任何其他平台。"
     >
       <VStack gap={4}>
         <ErrorBanner message={error} />

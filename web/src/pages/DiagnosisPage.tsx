@@ -82,7 +82,7 @@ export function DiagnosisPage() {
   return (
     <PageFrame
       title="门户诊断"
-      description="抓取官网公开 HTML、robots.txt 和 llms.txt，给出 GEO/SEO 清单。不会登录，也不会执行页面脚本。"
+      description="整站检查是内容分发前的一步。抓取官网公开 HTML、robots.txt 和 llms.txt，给出清单。不会登录，也不会执行页面脚本。改页由你自己发布。"
       actions={<Button label="抓取并诊断" variant="primary" clickAction={run} isDisabled={!studioId || url.trim().length < 8} />}
     >
       <VStack gap={4}>
