@@ -63,20 +63,23 @@ export function ComparePage() {
   }))
 
   return (
-    <PageFrame title="轮次对比" description="任选两轮，看同一道题有没有提到品牌、有没有引用官网。种子数据用第 0 周和第 4 周做第一对示例。">
+    <PageFrame
+      title="批次对比"
+      description="任选两个抽查批次，看同一道题有没有提到品牌、有没有引用官网。种子里的「示例·优化前」和「示例·优化后」只是历史样本。"
+    >
       <VStack gap={4}>
         <ErrorBanner message={error} />
-        {fromId && fromId === toId ? <Text color="secondary">两轮选的是同一个。再建一轮，才能看出优化前后的差别。</Text> : null}
+        {fromId && fromId === toId ? <Text color="secondary">选的是同一个抽查批次。再抽查一次，才能看出前后差别。</Text> : null}
         <HStack gap={3} wrap="wrap">
           <Selector
-            label="对照轮次"
+            label="对照批次"
             value={fromId}
             hasSearch
             options={cycleOptions(cycles)}
             onChange={(value) => setFromId(value || '')}
           />
           <Selector
-            label="本轮"
+            label="本批抽查"
             value={toId}
             hasSearch
             options={cycleOptions(cycles)}
@@ -85,8 +88,8 @@ export function ComparePage() {
         </HStack>
         {report ? (
           <HStack gap={3} wrap="wrap">
-            <RateBlock title={report.from?.name ?? '对照轮次'} metrics={report.from?.metrics} />
-            <RateBlock title={report.to?.name ?? '本轮'} metrics={report.to?.metrics} />
+            <RateBlock title={report.from?.name ?? '对照批次'} metrics={report.from?.metrics} />
+            <RateBlock title={report.to?.name ?? '本批抽查'} metrics={report.to?.metrics} />
           </HStack>
         ) : null}
         <Table
@@ -99,9 +102,9 @@ export function ComparePage() {
             { key: 'cluster', header: '簇', width: pixel(80) },
             { key: 'text', header: '提示词', width: proportional(2, { minWidth: 220 }) },
             { key: 'fromMentioned', header: '对照提及', width: pixel(96) },
-            { key: 'toMentioned', header: '本轮提及', width: pixel(96) },
+            { key: 'toMentioned', header: '本批提及', width: pixel(96) },
             { key: 'fromCited', header: '对照引用', width: pixel(96) },
-            { key: 'toCited', header: '本轮引用', width: pixel(96) },
+            { key: 'toCited', header: '本批引用', width: pixel(96) },
             { key: 'competitors', header: '竞品', width: proportional(1, { minWidth: 140 }) },
           ]}
         />

@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { compareCycles, metricsFor } from '../shared/compare.ts'
+import { defaultCycleName } from '../shared/cycles.ts'
 import { buildDiagnosis } from '../shared/diagnose.ts'
 import { acceptDraft, channelLabel, isDraftChannel, templateDraft } from '../shared/drafts.ts'
 import { parseAnswer } from '../shared/parseAnswer.ts'
@@ -80,22 +81,14 @@ app.post('/api/studios', async (c) => {
   const now = new Date().toISOString()
   const studio: Studio = { ...draft, id: crypto.randomUUID(), createdAt: now, updatedAt: now }
   await insertStudio(c.env.DB, studio)
-  const baseline: Cycle = {
+  const firstSample: Cycle = {
     id: crypto.randomUUID(),
     studioId: studio.id,
-    name: '第 0 周基线',
-    kind: 'baseline',
+    name: defaultCycleName(new Date(now)),
+    kind: 'custom',
     createdAt: now,
   }
-  const retest: Cycle = {
-    id: crypto.randomUUID(),
-    studioId: studio.id,
-    name: '第 4 周复测',
-    kind: 'retest',
-    createdAt: now,
-  }
-  await insertCycle(c.env.DB, baseline)
-  await insertCycle(c.env.DB, retest)
+  await insertCycle(c.env.DB, firstSample)
   return c.json({ studio }, 201)
 })
 
@@ -247,7 +240,7 @@ app.post('/api/studios/:id/cycles', async (c) => {
   const name = stringField(body, 'name').trim()
   const kind = stringField(body, 'kind')
   if (name.length < 2 || name.length > 40) throw new HttpError(400, '轮次名称需要 2 到 40 个字')
-  if (!isCycleKind(kind)) throw new HttpError(400, '轮次类型只能是基线、复测或自定义')
+  if (!isCycleKind(kind)) throw new HttpError(400, '轮次类型只能是抽查、基线或复测')
   const cycle: Cycle = {
     id: crypto.randomUUID(),
     studioId: studio.id,

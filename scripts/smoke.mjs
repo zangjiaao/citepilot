@@ -28,8 +28,8 @@ async function main() {
   if (!Array.isArray(generated.prompts)) throw new Error('generate did not return prompts')
   const compare = await json(`/api/studios/${studio.id}/compare?from=cycle-baseline&to=cycle-retest`)
   if (!compare.from || !compare.to) throw new Error('compare missing cycles')
-  if (compare.from.name !== '第 0 周基线' || compare.to.name !== '第 4 周复测') {
-    throw new Error('seed pair should still be selectable by id')
+  if (compare.from.name !== '示例·优化前' || compare.to.name !== '示例·优化后') {
+    throw new Error(`seed pair should be historical samples, got ${compare.from.name} / ${compare.to.name}`)
   }
   if ((compare.to.metrics?.mentionRate ?? 0) < (compare.from.metrics?.mentionRate ?? 1)) {
     throw new Error('seeded retest should not mention the brand less often than baseline')

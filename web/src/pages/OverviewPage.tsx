@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Card } from '@astryxdesign/core/Card'
+import { Collapsible } from '@astryxdesign/core/Collapsible'
 import { Grid } from '@astryxdesign/core/Grid'
 import { Heading } from '@astryxdesign/core/Heading'
-import { Section } from '@astryxdesign/core/Section'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
 import { PLAYBOOK } from '../../../shared/playbook.ts'
@@ -36,8 +36,8 @@ export function OverviewPage() {
   const counts = overview?.counts
   return (
     <PageFrame
-      title="GEO/AEO 自测"
-      description="用题库问回答引擎，粘贴回答，诊断公开页，再比较基线和复测。不登录、不爬取任何对话产品。"
+      title="GEO/AEO 监测"
+      description="每次抽样建一个轮次，粘贴回答，诊断公开页，再任选两批对比。不登录、不爬取任何对话产品。"
     >
       <VStack gap={4}>
         <ErrorBanner message={shellError || error} />
@@ -57,27 +57,28 @@ export function OverviewPage() {
             <Metric label="题库" value={String(counts?.prompts ?? 0)} detail={clusterDetail(counts?.byCluster)} />
             <Metric label="监测记录" value={String(counts?.observations ?? 0)} detail="含种子示例，可删除后换成你自己的粘贴" />
             <Metric
-              label="首轮提及率"
+              label="最早一批提及率"
               value={percent(overview.earliest?.metrics.mentionRate)}
-              detail={overview.earliest ? overview.earliest.name : '还没有轮次'}
+              detail={overview.earliest ? overview.earliest.name : '还没有抽查批次'}
             />
             <Metric
-              label="最近一轮提及率"
+              label="最近一批提及率"
               value={percent(overview.latest?.metrics.mentionRate)}
               detail={
                 overview.latest
                   ? overview.latest.id === overview.earliest?.id
-                    ? `${overview.latest.name} · 优化后再新建一轮`
+                    ? `${overview.latest.name} · 再抽查一次就能对比`
                     : `${overview.latest.name} · 引用 ${percent(overview.latest.metrics.citationRate)}`
-                  : '还没有轮次'
+                  : '还没有抽查批次'
               }
             />
           </Grid>
         ) : null}
-        <Section>
+        <Collapsible defaultIsOpen={false} trigger="首次验证剧本（可选）">
           <VStack gap={3}>
-            <Heading level={2}>四周自测</Heading>
-            <Text color="secondary">这是第一轮验证。之后每次改完公开页，新建一个轮次再测，任意两轮都可以对比。</Text>
+            <Text color="secondary">
+              第一次做验证时可以按这个顺序走一遍。日常监测不用按周：每次抽样新建一个抽查批次，再任选两批对比。
+            </Text>
             {PLAYBOOK.map((step) => (
               <VStack key={step.week} gap={1}>
                 <Heading level={3}>
@@ -87,7 +88,7 @@ export function OverviewPage() {
               </VStack>
             ))}
           </VStack>
-        </Section>
+        </Collapsible>
       </VStack>
     </PageFrame>
   )

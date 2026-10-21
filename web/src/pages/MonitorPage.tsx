@@ -7,6 +7,7 @@ import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { VStack } from '@astryxdesign/core/VStack'
+import { defaultCycleName } from '../../../shared/cycles.ts'
 import { CYCLE_KIND_LABEL, PLATFORMS, SENTIMENT_LABEL, isCycleKind, platformLabel } from '../../../shared/platforms.ts'
 import type { Cycle, CycleKind, Observation, Prompt } from '../../../shared/types.ts'
 import { api } from '../api'
@@ -36,7 +37,7 @@ export function MonitorPage() {
   const [cycleId, setCycleId] = useState('')
   const [platform, setPlatform] = useState('deepseek')
   const [answer, setAnswer] = useState('')
-  const [cycleName, setCycleName] = useState('')
+  const [cycleName, setCycleName] = useState(defaultCycleName)
   const [cycleKind, setCycleKind] = useState<CycleKind>('custom')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -88,7 +89,7 @@ export function MonitorPage() {
       method: 'POST',
       body: JSON.stringify({ name: cycleName, kind: cycleKind }),
     })
-    setCycleName('')
+    setCycleName(defaultCycleName())
     setCycleId(result.cycle.id)
     await load(studioId)
   }
@@ -125,14 +126,14 @@ export function MonitorPage() {
   }))
 
   return (
-    <PageFrame title="监测" description="选任意一轮、一道题和一个平台，把回答引擎的原文粘贴进来。解析只看文本，不访问登录后的对话页面。">
+    <PageFrame title="监测" description="选一个抽查批次、一道题和一个平台，把回答引擎的原文粘贴进来。解析只看文本，不访问登录后的对话页面。">
       <VStack gap={4}>
         <ErrorBanner message={error} />
         {notice ? <InfoBanner title="这条回答已记下" description={notice} /> : null}
         <VStack as="form" gap={3} onSubmit={(event) => void save(event)}>
           <FormLayout direction="vertical">
             <Selector
-              label="轮次"
+              label="抽查批次"
               value={cycleId}
               hasSearch
               options={cycles.map((cycle) => ({
@@ -167,15 +168,15 @@ export function MonitorPage() {
           <Button label="解析并保存" variant="primary" type="submit" isLoading={saving} isDisabled={answer.trim().length < 10} />
         </VStack>
         <VStack gap={2}>
-          <Text type="label">轮次</Text>
-          <Text color="secondary">名称自己定。第一轮可以用基线和复测，之后每次优化都新建一个自定义轮次。</Text>
+          <Text type="label">抽查批次</Text>
+          <Text color="secondary">每次抽样新建一批。名称默认是今天的日期加「抽查」，也可以改成「改站后」。</Text>
           <FormLayout direction="horizontal">
-            <TextInput label="名称" value={cycleName} onChange={setCycleName} placeholder="例如第 2 轮：补了 FAQ 之后" />
+            <TextInput label="名称" value={cycleName} onChange={setCycleName} placeholder="例如改站后" />
             <Selector
               label="类型"
               value={cycleKind}
               options={[
-                { value: 'custom', label: '自定义' },
+                { value: 'custom', label: '抽查' },
                 { value: 'baseline', label: '基线' },
                 { value: 'retest', label: '复测' },
               ]}

@@ -13,8 +13,8 @@ INSERT INTO studios (
 );
 
 INSERT INTO cycles (id, studio_id, name, kind, created_at) VALUES
-  ('cycle-baseline', 'studio-chengchuan', '第 0 周基线', 'baseline', '2026-09-01T09:05:00.000Z'),
-  ('cycle-retest', 'studio-chengchuan', '第 4 周复测', 'retest', '2026-09-28T09:05:00.000Z');
+  ('cycle-baseline', 'studio-chengchuan', '示例·优化前', 'baseline', '2026-09-01T09:05:00.000Z'),
+  ('cycle-retest', 'studio-chengchuan', '示例·优化后', 'retest', '2026-09-28T09:05:00.000Z');
 
 INSERT INTO prompts (id, studio_id, cluster, text, rationale, source, created_at) VALUES
   ('p01', 'studio-chengchuan', 'brand', '澄川智能体工场是做什么的？适合哪类企业？', '品牌认知：回答引擎能不能说清定位', 'seed', '2026-09-01T09:10:00.000Z'),

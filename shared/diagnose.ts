@@ -146,7 +146,7 @@ export function suggestionsFrom(checklist: CheckItem[]): string[] {
   push('lang', '在 html 上声明 lang="zh-CN"。')
   push('viewport', '加上 viewport meta，保证移动端摘录可读。')
   if (suggestions.length === 0) {
-    suggestions.push('基础信号已经齐了。下一步把可引用的定义、案例和交付边界写进正文，再去做复测。')
+    suggestions.push('基础信号已经齐了。下一步把可引用的定义、案例和交付边界写进正文，改完站再抽查一次。')
   }
   return suggestions.slice(0, 8)
 }

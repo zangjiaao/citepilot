@@ -16,7 +16,7 @@ export type PlatformId = (typeof PLATFORMS)[number]['id']
 export const CYCLE_KIND_LABEL: Record<string, string> = {
   baseline: '基线',
   retest: '复测',
-  custom: '自定义',
+  custom: '抽查',
 }
 
 export function isCycleKind(value: string): value is 'baseline' | 'retest' | 'custom' {

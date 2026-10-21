@@ -2,7 +2,7 @@
 
 Project-specific guidance for AI coding agents.
 
-CitePilot 是 GEO/AEO 自测工具。Worker API 在 `worker/`（Hono），页面在 `web/`（React 19 + Vite），纯函数在 `shared/`，D1 迁移在 `migrations/`。本地先 `npm run db:migrate`，再用 `npm run dev`。没有 `DEEPSEEK_API_KEY` 时走模板和规则。监测只接受粘贴的回答，诊断只抓取公开 http(s) 页面。
+CitePilot 是持续的 GEO/AEO 监测工具。每次抽样新建一个抽查批次，再任选两批对比。四周剧本只是可选的首次验证。Worker API 在 `worker/`（Hono），页面在 `web/`（React 19 + Vite），纯函数在 `shared/`，D1 迁移在 `migrations/`。本地先 `npm run db:migrate`，再用 `npm run dev`。没有 `DEEPSEEK_API_KEY` 时走模板和规则。监测只接受粘贴的回答，诊断只抓取公开 http(s) 页面。
 
 
 

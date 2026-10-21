@@ -73,7 +73,7 @@ export function StudioPage() {
       if (creating || !studio) {
         await api('/api/studios', { method: 'POST', body: JSON.stringify(payload) })
         setCreating(false)
-        setMessage('已新建工作室，并准备了基线和复测两个轮次。')
+        setMessage('已新建工作室，并准备了今天的抽查批次。')
       } else {
         await api(`/api/studios/${studio.id}`, { method: 'PUT', body: JSON.stringify(payload) })
         setMessage('档案已保存。之后生成的题目和监测解析都会用这份资料。')
