@@ -1,3 +1,4 @@
+import { competitorNames } from './competitors.ts'
 import type { Cluster, GeneratedPrompt, Studio } from './types.ts'
 
 export function normalizeQuestion(text: string): string {
@@ -6,8 +7,9 @@ export function normalizeQuestion(text: string): string {
 
 export function templatePrompts(studio: Pick<Studio, 'name' | 'services' | 'competitors' | 'keywords'>, existing: string[]): GeneratedPrompt[] {
   const name = studio.name.trim() || '这家工作室'
-  const competitor = studio.competitors[0]?.trim() || '同类工作室'
-  const competitor2 = studio.competitors[1]?.trim() || competitor
+  const names = competitorNames(studio.competitors)
+  const competitor = names[0] || '同类工作室'
+  const competitor2 = names[1] || competitor
   const keyword = studio.keywords[0]?.trim() || '企业智能体'
   const keyword2 = studio.keywords[1]?.trim() || keyword
   const service = studio.services[0]?.trim() || '智能体应用落地'

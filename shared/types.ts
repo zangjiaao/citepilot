@@ -5,13 +5,30 @@ export type ParserSource = 'rules' | 'deepseek'
 export type PromptSource = 'seed' | 'template' | 'llm' | 'manual'
 export type CheckStatus = 'pass' | 'warn' | 'fail'
 
+export const SELF_BRAND_KEY = 'self'
+
+export interface Competitor {
+  id: string
+  name: string
+  aliases: string[]
+  domain: string
+}
+
+export interface BrandHit {
+  key: string
+  name: string
+  mentioned: boolean
+  rank: number | null
+  cited: boolean
+}
+
 export interface Studio {
   id: string
   name: string
   website: string
   positioning: string
   services: string[]
-  competitors: string[]
+  competitors: Competitor[]
   keywords: string[]
   capabilities: string[]
   cases: string[]
@@ -95,6 +112,7 @@ export interface Observation {
   citedUrls: string[]
   ownUrlCited: boolean
   competitorsMentioned: string[]
+  brandHits: BrandHit[]
   sentiment: Sentiment
   summary: string
   parser: ParserSource
@@ -122,17 +140,30 @@ export interface Diagnosis {
   createdAt: string
 }
 
-export interface CycleMetrics {
+export interface BrandShare {
+  key: string
+  name: string
+  mentions: number
+  share: number | null
+  averageRank: number | null
+  citedSamples: number
+}
+
+export interface SampleGroup {
   observations: number
-  promptsCovered: number
   mentionRate: number | null
   citationRate: number | null
+  shareOfVoice: number | null
+  averageRank: number | null
+  stable: boolean
+}
+
+export interface CycleMetrics extends SampleGroup {
+  promptsCovered: number
   competitorRate: number | null
-  byPlatform: Array<{
-    platform: string
-    observations: number
-    mentionRate: number | null
-  }>
+  brands: BrandShare[]
+  byPlatform: Array<SampleGroup & { platform: string }>
+  byPrompt: Array<SampleGroup & { promptId: string; promptText: string }>
 }
 
 export interface CompareRow {
@@ -143,6 +174,16 @@ export interface CompareRow {
   toMentioned: boolean | null
   fromCited: boolean | null
   toCited: boolean | null
+  fromSamples: number
+  toSamples: number
+  fromMentionedSamples: number
+  toMentionedSamples: number
+  fromCitedSamples: number
+  toCitedSamples: number
+  fromShare: number | null
+  toShare: number | null
+  fromAverageRank: number | null
+  toAverageRank: number | null
   fromCompetitors: string[]
   toCompetitors: string[]
 }
@@ -151,6 +192,19 @@ export interface CompareReport {
   from: { id: string; name: string; kind: CycleKind; metrics: CycleMetrics } | null
   to: { id: string; name: string; kind: CycleKind; metrics: CycleMetrics } | null
   rows: CompareRow[]
+}
+
+export interface CycleTrendPoint {
+  id: string
+  name: string
+  kind: CycleKind
+  createdAt: string
+  samples: number
+  mentionRate: number | null
+  citationRate: number | null
+  shareOfVoice: number | null
+  averageRank: number | null
+  stable: boolean
 }
 
 export interface Overview {
@@ -172,6 +226,7 @@ export interface Overview {
     warn: number
     fail: number
   } | null
+  trend: CycleTrendPoint[]
 }
 
 export interface GeneratedPrompt {

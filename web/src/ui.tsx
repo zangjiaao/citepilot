@@ -53,3 +53,7 @@ export function ErrorBanner({ message }: { message: string }) {
 export function InfoBanner({ title, description }: { title: string; description?: string }) {
   return <Banner status="info" title={title} description={description} container="card" />
 }
+
+export function WarningBanner({ title, description }: { title: string; description?: string }) {
+  return <Banner status="warning" title={title} description={description} container="section" />
+}

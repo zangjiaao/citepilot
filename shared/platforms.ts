@@ -46,10 +46,23 @@ export const SOURCE_LABEL: Record<string, string> = {
   deepseek: 'DeepSeek',
 }
 
+const CUSTOM_PLATFORM = /^[\p{L}\p{N}][\p{L}\p{N} ._+-]{0,31}$/u
+
 export function platformLabel(id: string): string {
   return PLATFORMS.find((item) => item.id === id)?.label ?? id
 }
 
 export function isPlatformId(id: string): id is PlatformId {
   return PLATFORMS.some((item) => item.id === id)
+}
+
+export function normalizePlatform(value: string): string | null {
+  const trimmed = value.trim().replace(/\s+/g, ' ')
+  if (!trimmed) return null
+  const byId = PLATFORMS.find((item) => item.id === trimmed.toLowerCase())
+  if (byId) return byId.id
+  const byLabel = PLATFORMS.find((item) => item.label.toLowerCase() === trimmed.toLowerCase())
+  if (byLabel) return byLabel.id
+  if (!CUSTOM_PLATFORM.test(trimmed)) return null
+  return trimmed
 }

@@ -1,13 +1,14 @@
 import { Hono, type Context } from 'hono'
-import { compareCycles, metricsFor } from '../shared/compare.ts'
+import { compareCycles, metricsFor, type MetricScope } from '../shared/compare.ts'
+import { competitorNames, parseCompetitorList } from '../shared/competitors.ts'
 import { defaultCycleName } from '../shared/cycles.ts'
 import { buildDiagnosis } from '../shared/diagnose.ts'
 import { acceptDraft, channelLabel, copyDraftTitle, isDraftChannel, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
-import { parseAnswer } from '../shared/parseAnswer.ts'
-import { isCycleKind, isPlatformId, PLATFORMS } from '../shared/platforms.ts'
+import { parseAnswer, summarize } from '../shared/parseAnswer.ts'
+import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.ts'
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
 import { assertPublicHttpUrl } from '../shared/ssrf.ts'
-import type { Cluster, ContentDraft, Cycle, Diagnosis, DraftPreview, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
+import type { Cluster, ContentDraft, Cycle, CycleTrendPoint, Diagnosis, DraftPreview, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
 import {
   deleteCycle,
   deleteDraft,
@@ -34,7 +35,7 @@ import {
 import { llmConfig, type AppBindings } from './env.ts'
 import { HttpError } from './errors.ts'
 import { fetchPublic } from './fetchPage.ts'
-import { acceptGeneratedPrompts, acceptSuggestions, acceptSummary, deepseekJson } from './llm.ts'
+import { acceptGeneratedPrompts, acceptOwnSentiment, acceptSuggestions, acceptSummary, deepseekJson } from './llm.ts'
 
 export const app = new Hono<{ Bindings: AppBindings }>()
 
@@ -108,12 +109,14 @@ app.put('/api/studios/:id', async (c) => {
 
 app.get('/api/studios/:id/overview', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
-  const [prompts, observations, cycles, diagnoses] = await Promise.all([
+  const [prompts, storedObservations, cycles, diagnoses] = await Promise.all([
     listPrompts(c.env.DB, studio.id),
     listObservations(c.env.DB, studio.id),
     listCycles(c.env.DB, studio.id),
     listDiagnoses(c.env.DB, studio.id),
   ])
+  const observations = hydrateObservations(storedObservations, studio)
+  const scope = metricScope(studio)
   const llm = llmConfig(c.env)
   const ordered = [...cycles].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   const earliest = ordered[0] ?? null
@@ -134,10 +137,10 @@ app.get('/api/studios/:id/overview', async (c) => {
       },
     },
     earliest: earliest
-      ? { id: earliest.id, name: earliest.name, metrics: metricsFor(observations.filter((item) => item.cycleId === earliest.id)) }
+      ? { id: earliest.id, name: earliest.name, metrics: metricsFor(observations.filter((item) => item.cycleId === earliest.id), scope) }
       : null,
     latest: latestCycle
-      ? { id: latestCycle.id, name: latestCycle.name, metrics: metricsFor(observations.filter((item) => item.cycleId === latestCycle.id)) }
+      ? { id: latestCycle.id, name: latestCycle.name, metrics: metricsFor(observations.filter((item) => item.cycleId === latestCycle.id), scope) }
       : null,
     latestDiagnosis: latest
       ? {
@@ -148,7 +151,25 @@ app.get('/api/studios/:id/overview', async (c) => {
           warn: latest.checklist.filter((item) => item.status === 'warn').length,
           fail: latest.checklist.filter((item) => item.status === 'fail').length,
         }
-      : null,
+        : null,
+    trend: ordered.flatMap((cycle) => {
+      const rows = observations.filter((item) => item.cycleId === cycle.id)
+      if (rows.length === 0) return []
+      const metrics = metricsFor(rows, scope)
+      const point: CycleTrendPoint = {
+        id: cycle.id,
+        name: cycle.name,
+        kind: cycle.kind,
+        createdAt: cycle.createdAt,
+        samples: metrics.observations,
+        mentionRate: metrics.mentionRate,
+        citationRate: metrics.citationRate,
+        shareOfVoice: metrics.shareOfVoice,
+        averageRank: metrics.averageRank,
+        stable: metrics.stable,
+      }
+      return [point]
+    }),
   }
   return c.json(overview)
 })
@@ -196,7 +217,7 @@ app.post('/api/studios/:id/prompts/generate', async (c) => {
           `官网：${studio.website}`,
           `定位：${studio.positioning}`,
           `服务：${studio.services.join('、') || '未填'}`,
-          `竞品：${studio.competitors.join('、') || '未填'}`,
+          `竞品：${competitorNames(studio.competitors).join('、') || '未填'}`,
           `关键词：${studio.keywords.join('、') || '未填'}`,
           `已有题目，不要重复：${existing.map((item) => item.text).join('；') || '无'}`,
           '请新写 8 题，四个簇都要有。品牌题必须出现工作室名称。对比题必须同时出现工作室名称和至少一个竞品。品类题不要塞进品牌名。',
@@ -261,8 +282,8 @@ app.delete('/api/studios/:id/cycles/:cycleId', async (c) => {
 })
 
 app.get('/api/studios/:id/observations', async (c) => {
-  await mustStudio(c.env.DB, c.req.param('id'))
-  return c.json({ observations: await listObservations(c.env.DB, c.req.param('id')) })
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  return c.json({ observations: hydrateObservations(await listObservations(c.env.DB, studio.id), studio) })
 })
 
 app.post('/api/studios/:id/observations', async (c) => {
@@ -270,9 +291,9 @@ app.post('/api/studios/:id/observations', async (c) => {
   const body = asRecord(await readJson(c))
   const promptId = stringField(body, 'promptId')
   const cycleId = stringField(body, 'cycleId')
-  const platform = stringField(body, 'platform')
+  const platform = normalizePlatform(stringField(body, 'platform'))
   const answerText = stringField(body, 'answerText').trim()
-  if (!isPlatformId(platform)) throw new HttpError(400, '不认识这个平台')
+  if (!platform) throw new HttpError(400, '平台名称需要 1 到 32 个字，可以选列表，也可以自己填')
   if (answerText.length < 10 || answerText.length > 20_000) throw new HttpError(400, '回答需要在 10 到 20000 字之间')
   const prompts = await listPrompts(c.env.DB, studio.id)
   const prompt = prompts.find((item) => item.id === promptId)
@@ -289,14 +310,21 @@ app.post('/api/studios/:id/observations', async (c) => {
     try {
       const raw = await deepseekJson(
         c.env,
-        '你是 GEO 监测助手。规则解析已经给出事实，请只根据这些事实和回答原文，用中文写一段 80 字以内的摘要。不要发明规则结果里没有的网址或竞品。只输出 JSON：{"summary":"..."}',
+        '你是 GEO 监测助手。规则解析已经给出品牌是否出现、排名、网址和竞品。请只根据这些事实和回答原文，用中文写一段 80 字以内的摘要。不要发明规则结果里没有的网址、品牌或排名。如果品牌被提到，再判断回答对本品牌的态度，只能是 positive、neutral 或 negative：明显推荐或夸奖用 positive，明显劝退或批评用 negative，其余用 neutral。品牌没被提到时 sentiment 用 neutral。只输出 JSON：{"summary":"...","sentiment":"positive|neutral|negative"}',
         `规则结果：${JSON.stringify({ ...parsed, summary: undefined })}\n回答原文：${answerText.slice(0, 4000)}`,
         0.2,
       )
       const summary = acceptSummary(raw)
+      const sentiment = acceptOwnSentiment(raw)
+      if (parsed.brandMentioned && sentiment) {
+        parsed.sentiment = sentiment
+        parser = 'deepseek'
+      }
       if (summary) {
         parsed.summary = summary
         parser = 'deepseek'
+      } else if (parser === 'deepseek') {
+        parsed.summary = summarize(parsed)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -318,6 +346,7 @@ app.post('/api/studios/:id/observations', async (c) => {
     citedUrls: parsed.citedUrls,
     ownUrlCited: parsed.ownUrlCited,
     competitorsMentioned: parsed.competitorsMentioned,
+    brandHits: parsed.brandHits,
     sentiment: parsed.sentiment,
     summary: parsed.summary,
     parser,
@@ -562,15 +591,16 @@ app.delete('/api/studios/:id/drafts/:draftId', async (c) => {
 
 app.get('/api/studios/:id/compare', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
-  const [prompts, observations, cycles] = await Promise.all([
+  const [prompts, storedObservations, cycles] = await Promise.all([
     listPrompts(c.env.DB, studio.id),
     listObservations(c.env.DB, studio.id),
     listCycles(c.env.DB, studio.id),
   ])
+  const observations = hydrateObservations(storedObservations, studio)
   const ordered = [...cycles].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   const from = await pickCycle(c.env.DB, studio.id, c.req.query('from') || c.req.query('baseline'), ordered[0] ?? null)
   const to = await pickCycle(c.env.DB, studio.id, c.req.query('to') || c.req.query('retest'), ordered.at(-1) ?? null)
-  return c.json(compareCycles(prompts, observations, from, to))
+  return c.json(compareCycles(prompts, observations, from, to, metricScope(studio)))
 })
 
 app.all('/api/*', (c) => c.json({ error: '没有这个接口' }, 404))
@@ -625,13 +655,38 @@ function studioFromBody(body: unknown): Omit<Studio, 'id' | 'createdAt' | 'updat
     website: parsed.toString(),
     positioning,
     services: stringList(record.services, 20, 80),
-    competitors: stringList(record.competitors, 20, 80),
+    competitors: competitorField(record.competitors),
     keywords: stringList(record.keywords, 20, 40),
     capabilities: optionalStringList(record.capabilities, 12, 120),
     cases: optionalStringList(record.cases, 8, 200),
     targetCustomers: optionalStringList(record.targetCustomers, 12, 80),
     solutions: optionalStringList(record.solutions, 12, 120),
   }
+}
+
+function competitorField(value: unknown): Studio['competitors'] {
+  const parsed = parseCompetitorList(value)
+  if (!parsed.ok) throw new HttpError(400, parsed.error)
+  return parsed.competitors
+}
+
+function metricScope(studio: Studio): MetricScope {
+  return { ownName: studio.name, website: studio.website, competitors: studio.competitors }
+}
+
+function hydrateObservations(observations: Observation[], studio: Studio): Observation[] {
+  return observations.map((item) => {
+    if (item.brandHits.length > 0 || item.answerText.trim().length === 0) return item
+    return {
+      ...item,
+      brandHits: parseAnswer({
+        answer: item.answerText,
+        brandName: studio.name,
+        website: studio.website,
+        competitors: studio.competitors,
+      }).brandHits,
+    }
+  })
 }
 
 function optionalStringList(value: unknown, maxItems: number, maxLength: number): string[] {

@@ -77,6 +77,13 @@ export function acceptSummary(raw: unknown): string | null {
   return trimmed
 }
 
+export function acceptOwnSentiment(raw: unknown): 'positive' | 'neutral' | 'negative' | null {
+  if (!raw || typeof raw !== 'object') return null
+  const sentiment = (raw as { sentiment?: unknown }).sentiment
+  if (sentiment === 'positive' || sentiment === 'neutral' || sentiment === 'negative') return sentiment
+  return null
+}
+
 export function acceptSuggestions(raw: unknown): string[] | null {
   if (!raw || typeof raw !== 'object') return null
   const list = asStringArray((raw as { suggestions?: unknown }).suggestions).map((item) => item.slice(0, 240))

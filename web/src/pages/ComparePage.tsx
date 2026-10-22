@@ -6,12 +6,13 @@ import { Table, pixel, proportional } from '@astryxdesign/core/Table'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
 import { HStack } from '@astryxdesign/core/HStack'
+import { sampleStabilityNote } from '../../../shared/compare.ts'
 import { CLUSTER_LABEL, CYCLE_KIND_LABEL, platformLabel } from '../../../shared/platforms.ts'
-import type { CompareReport, Cycle, CycleMetrics } from '../../../shared/types.ts'
+import { SELF_BRAND_KEY, type CompareReport, type Cycle, type CycleMetrics } from '../../../shared/types.ts'
 import { api } from '../api'
-import { percent } from '../format'
+import { formatRank, percent, sampleFraction } from '../format'
 import { useStudio } from '../studio'
-import { ErrorBanner, PageFrame } from '../ui'
+import { ErrorBanner, PageFrame, WarningBanner } from '../ui'
 
 interface CompareTableRow extends Record<string, unknown> {
   promptId: string
@@ -55,17 +56,17 @@ export function ComparePage() {
     promptId: row.promptId,
     cluster: CLUSTER_LABEL[row.cluster] ?? row.cluster,
     text: row.text,
-    fromMentioned: flag(row.fromMentioned),
-    toMentioned: flag(row.toMentioned),
-    fromCited: flag(row.fromCited),
-    toCited: flag(row.toCited),
+    fromMentioned: sampleFraction(row.fromMentionedSamples, row.fromSamples),
+    toMentioned: sampleFraction(row.toMentionedSamples, row.toSamples),
+    fromCited: sampleFraction(row.fromCitedSamples, row.fromSamples),
+    toCited: sampleFraction(row.toCitedSamples, row.toSamples),
     competitors: [...new Set([...row.fromCompetitors, ...row.toCompetitors])].join('、') || '无',
   }))
 
   return (
     <PageFrame
       title="与基线对比"
-      description="左侧选基线，右侧选后来的监测，看同一套题的提及和引用有没有抬升。种子里的「示例·优化前」可以当作基线样本。"
+      description="左侧选基线，右侧选后来的监测。提及和引用按样本计，分子是命中的样本。两侧同时给出声量占比、平均排名和样本量。"
     >
       <VStack gap={4}>
         <ErrorBanner message={error} />
@@ -104,10 +105,10 @@ export function ComparePage() {
           columns={[
             { key: 'cluster', header: '簇', width: pixel(80) },
             { key: 'text', header: '提示词', width: proportional(2, { minWidth: 220 }) },
-            { key: 'fromMentioned', header: '基线提及', width: pixel(96) },
-            { key: 'toMentioned', header: '后续提及', width: pixel(96) },
-            { key: 'fromCited', header: '基线引用', width: pixel(96) },
-            { key: 'toCited', header: '后续引用', width: pixel(96) },
+            { key: 'fromMentioned', header: '基线提及', width: pixel(110) },
+            { key: 'toMentioned', header: '后续提及', width: pixel(110) },
+            { key: 'fromCited', header: '基线引用', width: pixel(110) },
+            { key: 'toCited', header: '后续引用', width: pixel(110) },
             { key: 'competitors', header: '竞品', width: proportional(1, { minWidth: 140 }) },
           ]}
         />
@@ -117,17 +118,28 @@ export function ComparePage() {
 }
 
 function RateBlock({ title, metrics }: { title: string; metrics?: CycleMetrics }) {
+  const note = sampleStabilityNote(metrics?.observations ?? 0)
+  const brands = (metrics?.brands ?? []).filter((brand) => brand.key === SELF_BRAND_KEY || brand.mentions > 0 || brand.citedSamples > 0)
   return (
     <Section>
       <VStack gap={1}>
         <Heading level={2}>{title}</Heading>
-        <Text>记录 {metrics?.observations ?? 0} 条，覆盖 {metrics?.promptsCovered ?? 0} 题</Text>
-        <Text>品牌提及 {percent(metrics?.mentionRate)}</Text>
-        <Text>自有网址 {percent(metrics?.citationRate)}</Text>
-        <Text>出现竞品 {percent(metrics?.competitorRate)}</Text>
+        {note ? <WarningBanner title="结论不稳定" description={note} /> : null}
+        <Text>
+          样本量 {metrics?.observations ?? 0}，覆盖 {metrics?.promptsCovered ?? 0} 题
+        </Text>
+        <Text>提及率 {percent(metrics?.mentionRate)}</Text>
+        <Text>引用率 {percent(metrics?.citationRate)}</Text>
+        <Text>声量占比 {percent(metrics?.shareOfVoice)}</Text>
+        <Text>平均排名 {formatRank(metrics?.averageRank)}</Text>
+        {brands.map((brand) => (
+          <Text key={brand.key} type="supporting" color="secondary">
+            {brand.name} 提及 {brand.mentions} 次 · 占比 {percent(brand.share)} · 均排 {formatRank(brand.averageRank)}
+          </Text>
+        ))}
         {(metrics?.byPlatform ?? []).map((item) => (
           <Text key={item.platform} type="supporting" color="secondary">
-            {platformLabel(item.platform)} {item.observations} 条，提及 {percent(item.mentionRate)}
+            {platformLabel(item.platform)} {item.observations} 条样本，提及 {percent(item.mentionRate)}，声量 {percent(item.shareOfVoice)}
           </Text>
         ))}
       </VStack>
@@ -141,9 +153,4 @@ function cycleOptions(cycles: Cycle[]) {
     label: cycle.name,
     description: CYCLE_KIND_LABEL[cycle.kind] ?? cycle.kind,
   }))
-}
-
-function flag(value: boolean | null): string {
-  if (value === null) return '未记录'
-  return value ? '是' : '否'
 }

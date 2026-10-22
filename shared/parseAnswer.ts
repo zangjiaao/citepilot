@@ -1,4 +1,5 @@
-import type { Sentiment } from './types.ts'
+import { normalizeDomain } from './competitors.ts'
+import { SELF_BRAND_KEY, type BrandHit, type Competitor, type Sentiment } from './types.ts'
 
 const POSITIVE = ['推荐', '专业', '可靠', '领先', '口碑好', '值得', '成熟', '优势', '经验丰富']
 const NEGATIVE = ['不推荐', '不建议', '踩坑', '投诉', '风险高', '不靠谱', '较差', '负面', '失败', '谨慎']
@@ -9,7 +10,7 @@ export interface ParseInput {
   answer: string
   brandName: string
   website: string
-  competitors: string[]
+  competitors: Competitor[]
 }
 
 export interface AnswerParse {
@@ -18,6 +19,7 @@ export interface AnswerParse {
   citedUrls: string[]
   ownUrlCited: boolean
   competitorsMentioned: string[]
+  brandHits: BrandHit[]
   sentiment: Sentiment
   summary: string
 }
@@ -58,25 +60,26 @@ export function parseAnswer(input: ParseInput): AnswerParse {
   const answer = input.answer.replace(/\u0000/g, '')
   const aliases = brandAliases(input.brandName)
   const brandSnippets: string[] = []
-  for (const alias of aliases) {
-    brandSnippets.push(...snippets(answer, alias))
-  }
+  for (const alias of aliases) brandSnippets.push(...snippets(answer, alias))
   const uniqueSnippets = [...new Set(brandSnippets)].slice(0, 3)
-  const brandMentioned = uniqueSnippets.length > 0
   const citedUrls = extractUrls(answer)
-  const host = websiteHost(input.website)
-  const ownUrlCited = host
-    ? citedUrls.some((url) => hostMatches(url, host)) || answer.toLowerCase().includes(host)
-    : false
-  const competitorsMentioned = input.competitors.filter((name) => name.trim() && includesTerm(answer, name.trim()))
-  const sentiment = brandMentioned ? sentimentOf(answer) : 'neutral'
+  const brandHits = rankBrands(answer, citedUrls, {
+    key: SELF_BRAND_KEY,
+    name: input.brandName.trim() || '本品牌',
+    terms: aliases,
+    domain: websiteHost(input.website),
+  }, input.competitors)
+  const self = brandHits.find((hit) => hit.key === SELF_BRAND_KEY)
+  const competitorsMentioned = brandHits.filter((hit) => hit.key !== SELF_BRAND_KEY && hit.mentioned).map((hit) => hit.name)
+  const brandMentioned = uniqueSnippets.length > 0 || Boolean(self?.mentioned)
   const parsed: AnswerParse = {
     brandMentioned,
     brandSnippets: uniqueSnippets,
     citedUrls,
-    ownUrlCited,
+    ownUrlCited: Boolean(self?.cited),
     competitorsMentioned,
-    sentiment,
+    brandHits,
+    sentiment: brandMentioned ? sentimentOf(answer) : 'neutral',
     summary: '',
   }
   parsed.summary = summarize(parsed)
@@ -84,9 +87,71 @@ export function parseAnswer(input: ParseInput): AnswerParse {
 }
 
 export function summarize(parsed: Omit<AnswerParse, 'summary'>): string {
-  const comps = parsed.competitorsMentioned.length > 0 ? parsed.competitorsMentioned.join('、') : '无'
+  const self = parsed.brandHits.find((hit) => hit.key === SELF_BRAND_KEY)
+  const brand = parsed.brandMentioned ? (self?.rank ? `品牌已出现，排名第 ${self.rank}` : '品牌已出现') : '品牌未出现'
+  const comps = parsed.brandHits.filter((hit) => hit.key !== SELF_BRAND_KEY && hit.mentioned)
+  const compText = comps.length === 0 ? '无' : comps.map((hit) => (hit.rank ? `${hit.name}（第 ${hit.rank}）` : hit.name)).join('、')
   const tone = { positive: '偏正面', neutral: '中性', negative: '偏负面', mixed: '褒贬都有' }[parsed.sentiment]
-  return `规则解析：品牌${parsed.brandMentioned ? '已出现' : '未出现'}；自有网址${parsed.ownUrlCited ? '被引用' : '未被引用'}；竞品提及：${comps}；态度倾向：${tone}。`
+  return `规则解析：${brand}；自有网址${parsed.ownUrlCited ? '被引用' : '未被引用'}；竞品提及：${compText}；态度倾向：${tone}。`
+}
+
+interface TrackedTerm {
+  key: string
+  name: string
+  terms: string[]
+  domain: string | null
+}
+
+function rankBrands(answer: string, urls: string[], self: TrackedTerm, competitors: Competitor[]): BrandHit[] {
+  const tracked: TrackedTerm[] = [
+    self,
+    ...competitors.map((item) => ({
+      key: item.id,
+      name: item.name,
+      terms: [item.name, ...item.aliases],
+      domain: normalizeDomain(item.domain),
+    })),
+  ]
+  const found: Array<TrackedTerm & { index: number; length: number; cited: boolean }> = []
+  const silent: BrandHit[] = []
+  for (const brand of tracked) {
+    const located = locate(answer, brand.terms)
+    const cited = domainCited(answer, urls, brand.domain)
+    if (located) found.push({ ...brand, index: located.index, length: located.length, cited })
+    else if (cited) silent.push({ key: brand.key, name: brand.name, mentioned: false, rank: null, cited: true })
+  }
+  found.sort((a, b) => a.index - b.index || b.length - a.length || a.key.localeCompare(b.key))
+  return [
+    ...found.map((brand, index) => ({
+      key: brand.key,
+      name: brand.name,
+      mentioned: true,
+      rank: index + 1,
+      cited: brand.cited,
+    })),
+    ...silent,
+  ]
+}
+
+function locate(text: string, terms: string[]): { index: number; length: number } | null {
+  const lower = text.toLowerCase()
+  let best: { index: number; length: number } | null = null
+  for (const term of terms) {
+    const needle = term.trim()
+    if (needle.length < 2) continue
+    const at = lower.indexOf(needle.toLowerCase())
+    if (at < 0) continue
+    if (!best || at < best.index || (at === best.index && needle.length > best.length)) {
+      best = { index: at, length: needle.length }
+    }
+  }
+  return best
+}
+
+function domainCited(answer: string, urls: string[], domain: string | null): boolean {
+  if (!domain) return false
+  if (urls.some((url) => hostMatches(url, domain))) return true
+  return answer.toLowerCase().includes(domain)
 }
 
 function sentimentOf(answer: string): Sentiment {
@@ -98,11 +163,8 @@ function sentimentOf(answer: string): Sentiment {
   return 'neutral'
 }
 
-function includesTerm(haystack: string, needle: string): boolean {
-  return haystack.toLowerCase().includes(needle.toLowerCase())
-}
-
 function snippets(text: string, needle: string): string[] {
+  if (needle.length < 2) return []
   const lower = text.toLowerCase()
   const target = needle.toLowerCase()
   const found: string[] = []

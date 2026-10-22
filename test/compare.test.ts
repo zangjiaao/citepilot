@@ -22,6 +22,7 @@ const observation = (partial: Pick<Observation, 'id' | 'promptId' | 'cycleId' | 
   brandSnippets: [],
   citedUrls: [],
   competitorsMentioned: [],
+  brandHits: [],
   sentiment: 'neutral',
   summary: '',
   parser: 'rules',
@@ -43,8 +44,19 @@ describe('compareCycles', () => {
     const report = compareCycles(prompts, observations, cycles[0] ?? null, cycles[1] ?? null)
     expect(report.from?.metrics.mentionRate).toBe(0)
     expect(report.to?.metrics.mentionRate).toBe(1)
-    expect(report.rows[0]).toMatchObject({ fromMentioned: false, toMentioned: true, toCited: true })
-    expect(report.rows[1]).toMatchObject({ fromMentioned: null, toMentioned: null })
+    expect(report.from?.metrics.observations).toBe(1)
+    expect(report.from?.metrics.shareOfVoice).toBeNull()
+    expect(report.to?.metrics.shareOfVoice).toBe(1)
+    expect(report.to?.metrics.averageRank).toBeNull()
+    expect(report.rows[0]).toMatchObject({
+      fromMentioned: false,
+      toMentioned: true,
+      toCited: true,
+      fromSamples: 1,
+      toSamples: 1,
+      toMentionedSamples: 1,
+    })
+    expect(report.rows[1]).toMatchObject({ fromMentioned: null, toMentioned: null, fromSamples: 0, toSamples: 0 })
   })
 
   it('compares two custom rounds the same way as the first baseline pair', () => {

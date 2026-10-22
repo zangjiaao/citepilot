@@ -6,18 +6,25 @@ import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { VStack } from '@astryxdesign/core/VStack'
-import type { Studio } from '../../../shared/types.ts'
+import type { Competitor, Studio } from '../../../shared/types.ts'
 import { api } from '../api'
 import { joinLines, splitList } from '../format'
 import { useStudio } from '../studio'
 import { ErrorBanner, PageFrame } from '../ui'
+
+interface CompetitorDraft {
+  id: string
+  name: string
+  aliases: string
+  domain: string
+}
 
 interface Draft {
   name: string
   website: string
   positioning: string
   services: string
-  competitors: string
+  competitors: CompetitorDraft[]
   keywords: string
   capabilities: string
   cases: string
@@ -30,7 +37,7 @@ const emptyDraft: Draft = {
   website: 'https://',
   positioning: '',
   services: '',
-  competitors: '',
+  competitors: [],
   keywords: '',
   capabilities: '',
   cases: '',
@@ -50,7 +57,14 @@ export function StudioPage() {
     if (studio && !creating) setDraft(fromStudio(studio))
   }, [studio, creating])
 
-  const update = (key: keyof Draft) => (value: string) => setDraft((current) => ({ ...current, [key]: value }))
+  const update = (key: Exclude<keyof Draft, 'competitors'>) => (value: string) => setDraft((current) => ({ ...current, [key]: value }))
+
+  const updateCompetitor = (id: string, key: keyof Omit<CompetitorDraft, 'id'>, value: string) => {
+    setDraft((current) => ({
+      ...current,
+      competitors: current.competitors.map((item) => (item.id === id ? { ...item, [key]: value } : item)),
+    }))
+  }
 
   const save = async (event: FormEvent) => {
     event.preventDefault()
@@ -62,7 +76,14 @@ export function StudioPage() {
       website: draft.website,
       positioning: draft.positioning,
       services: splitList(draft.services),
-      competitors: splitList(draft.competitors),
+      competitors: draft.competitors
+        .filter((item) => item.name.trim())
+        .map((item) => ({
+          id: item.id,
+          name: item.name.trim(),
+          aliases: splitAliases(item.aliases),
+          domain: item.domain.trim(),
+        })),
       keywords: splitList(draft.keywords),
       capabilities: splitList(draft.capabilities),
       cases: splitList(draft.cases),
@@ -89,7 +110,7 @@ export function StudioPage() {
   return (
     <PageFrame
       title="工作室档案"
-      description="名称、官网、定位、服务、竞品和关键词会用来出题，也会用来判断回答里有没有提到你。能力、案例、目标客户和解决方案会用来起草可引用的内容。"
+      description="名称、官网、定位、服务、竞品和关键词会用来出题，也会用来判断回答里有没有提到你。竞品可以写别名和域名。能力、案例、目标客户和解决方案会用来起草可引用的内容。"
       actions={
         <Button
           label="新建工作室"
@@ -118,7 +139,25 @@ export function StudioPage() {
           />
           <TextArea label="定位" value={draft.positioning} onChange={update('positioning')} rows={5} isRequired width="100%" />
           <TextArea label="服务" description="一行一项。" value={draft.services} onChange={update('services')} rows={4} width="100%" />
-          <TextArea label="竞品" description="一行一个名称，监测时按这些名字查找。" value={draft.competitors} onChange={update('competitors')} rows={4} width="100%" />
+          <VStack gap={2}>
+            <Text type="label">竞品</Text>
+            <Text color="secondary">名称、别名和域名。别名用顿号或逗号分隔。监测按名称和别名判断有没有被提到，按域名判断有没有被引用，并记下第一次出现的顺序。</Text>
+            {draft.competitors.map((item) => (
+              <VStack key={item.id} gap={2}>
+                <FormLayout direction="horizontal">
+                  <TextInput label="名称" value={item.name} onChange={(value) => updateCompetitor(item.id, 'name', value)} width="100%" />
+                  <TextInput label="别名" value={item.aliases} onChange={(value) => updateCompetitor(item.id, 'aliases', value)} width="100%" />
+                  <TextInput label="域名" value={item.domain} onChange={(value) => updateCompetitor(item.id, 'domain', value)} width="100%" />
+                </FormLayout>
+                <Button label="移除" size="sm" variant="ghost" onClick={() => setDraft((current) => ({ ...current, competitors: current.competitors.filter((row) => row.id !== item.id) }))} />
+              </VStack>
+            ))}
+            <Button
+              label="添加竞品"
+              variant="secondary"
+              onClick={() => setDraft((current) => ({ ...current, competitors: [...current.competitors, blankCompetitor()] }))}
+            />
+          </VStack>
           <TextArea label="关键词" description="逗号或换行分隔。" value={draft.keywords} onChange={update('keywords')} rows={3} width="100%" />
           <TextArea label="能力" description="一行一项。内容起草会把这些句子写成可被引用的事实。" value={draft.capabilities} onChange={update('capabilities')} rows={4} width="100%" />
           <TextArea label="案例" description="一行一个可公开的例子。不要写无法核对的客户名或效果数字。" value={draft.cases} onChange={update('cases')} rows={4} width="100%" />
@@ -142,11 +181,31 @@ function fromStudio(studio: Studio): Draft {
     website: studio.website,
     positioning: studio.positioning,
     services: joinLines(studio.services),
-    competitors: joinLines(studio.competitors),
+    competitors: studio.competitors.map(competitorDraft),
     keywords: joinLines(studio.keywords),
     capabilities: joinLines(studio.capabilities),
     cases: joinLines(studio.cases),
     targetCustomers: joinLines(studio.targetCustomers),
     solutions: joinLines(studio.solutions),
   }
+}
+
+function competitorDraft(competitor: Competitor): CompetitorDraft {
+  return {
+    id: competitor.id,
+    name: competitor.name,
+    aliases: competitor.aliases.join('、'),
+    domain: competitor.domain,
+  }
+}
+
+function blankCompetitor(): CompetitorDraft {
+  return { id: crypto.randomUUID(), name: '', aliases: '', domain: '' }
+}
+
+function splitAliases(value: string): string[] {
+  return value
+    .split(/\n|，|,|、/)
+    .map((item) => item.trim())
+    .filter(Boolean)
 }

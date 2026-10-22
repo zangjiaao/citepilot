@@ -6,6 +6,9 @@ async function main() {
   const studios = await json('/api/studios')
   const studio = studios.studios?.[0]
   if (!studio?.id) throw new Error('missing seed studio')
+  if (!studio.competitors?.[0]?.domain || !studio.competitors?.[0]?.aliases?.length) {
+    throw new Error('seed competitors should include aliases and a domain')
+  }
   const prompts = await json(`/api/studios/${studio.id}/prompts`)
   if ((prompts.prompts?.length ?? 0) < 16) throw new Error(`expected seeded prompts, got ${prompts.prompts?.length}`)
   const cycles = await json(`/api/studios/${studio.id}/cycles`)
@@ -34,6 +37,23 @@ async function main() {
   if ((compare.to.metrics?.mentionRate ?? 0) < (compare.from.metrics?.mentionRate ?? 1)) {
     throw new Error('seeded retest should not mention the brand less often than baseline')
   }
+  if (compare.from.metrics?.observations !== 10 || compare.to.metrics?.observations !== 7) {
+    throw new Error(`seed sample sizes changed: ${compare.from.metrics?.observations} / ${compare.to.metrics?.observations}`)
+  }
+  if (!((compare.to.metrics?.shareOfVoice ?? 0) > (compare.from.metrics?.shareOfVoice ?? 1))) {
+    throw new Error('seeded retest should have a higher share of voice')
+  }
+  if ((compare.to.metrics?.averageRank ?? 99) > (compare.from.metrics?.averageRank ?? 0)) {
+    throw new Error('seeded retest average rank should not be worse than baseline')
+  }
+  const overview = await json(`/api/studios/${studio.id}/overview`)
+  if ((overview.trend?.length ?? 0) < 2) throw new Error('overview trend missing batches')
+  const baselineTrend = overview.trend.find((item) => item.id === 'cycle-baseline')
+  const retestTrend = overview.trend.find((item) => item.id === 'cycle-retest')
+  if (!baselineTrend || !retestTrend) throw new Error('trend missing the seed pair')
+  if (!((retestTrend.mentionRate ?? 0) > (baselineTrend.mentionRate ?? 1))) {
+    throw new Error('trend mention rate did not rise')
+  }
   const custom = await json(`/api/studios/${studio.id}/cycles`, {
     method: 'POST',
     body: JSON.stringify({ name: '冒烟第2轮', kind: 'custom' }),
@@ -44,14 +64,32 @@ async function main() {
     body: JSON.stringify({
       promptId: prompt.id,
       cycleId: custom.cycle.id,
-      platform: 'deepseek',
-      answerText: '澄川智能体工场可以先帮团队整理故障手册。公开说明见 https://example.com ，做法比较专业。',
+      platform: '元宝',
+      answerText: '澜舟实验室写在前面，站点 https://lanzhou.example 。澄川智能体工场写在后面，官网 https://example.com ，做法比较专业。',
     }),
   })
+  const hits = customObservation.observation?.brandHits ?? []
+  const selfHit = hits.find((item) => item.key === 'self')
+  const rivalHit = hits.find((item) => item.name === '澜舟智能体实验室')
+  if (customObservation.observation?.platform !== '元宝') throw new Error('custom platform was not stored')
+  if (!selfHit?.mentioned || selfHit.rank !== 2 || !selfHit.cited) throw new Error(`own brand rank missing: ${JSON.stringify(hits)}`)
+  if (!rivalHit?.mentioned || rivalHit.rank !== 1 || !rivalHit.cited) throw new Error(`competitor alias or domain missed: ${JSON.stringify(hits)}`)
+  const second = await json(`/api/studios/${studio.id}/observations`, {
+    method: 'POST',
+    body: JSON.stringify({
+      promptId: prompt.id,
+      cycleId: custom.cycle.id,
+      platform: 'deepseek',
+      answerText: '这次只讲了实施步骤和验收范围，没有点名具体服务商，也没有给出网址。',
+    }),
+  })
+  if (second.observation?.brandMentioned) throw new Error('second sample should not count as a brand mention')
   const customCompare = await json(`/api/studios/${studio.id}/compare?from=cycle-baseline&to=${custom.cycle.id}`)
   if (customCompare.to?.id !== custom.cycle.id) throw new Error('compare did not use the custom cycle')
-  if ((customCompare.to.metrics?.mentionRate ?? 0) <= 0) throw new Error('custom cycle mention rate missing')
+  if (customCompare.to?.metrics?.observations !== 2) throw new Error('two pastes of one prompt should count as two samples')
+  if (customCompare.to?.metrics?.mentionRate !== 0.5) throw new Error(`expected mention rate 0.5, got ${customCompare.to?.metrics?.mentionRate}`)
   await json(`/api/studios/${studio.id}/observations/${customObservation.observation.id}`, { method: 'DELETE' })
+  await json(`/api/studios/${studio.id}/observations/${second.observation.id}`, { method: 'DELETE' })
   await json(`/api/studios/${studio.id}/cycles/${custom.cycle.id}`, { method: 'DELETE' })
   const generatedDraft = await json(`/api/studios/${studio.id}/drafts/generate`, {
     method: 'POST',

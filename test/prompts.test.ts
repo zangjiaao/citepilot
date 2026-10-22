@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { templatePrompts } from '../shared/prompts.ts'
-import { acceptGeneratedPrompts } from '../worker/llm.ts'
+import { acceptGeneratedPrompts, acceptOwnSentiment } from '../worker/llm.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -9,7 +9,10 @@ const studio: Studio = {
   website: 'https://example.com',
   positioning: '面向企业的前场部署工作室，做可上线的业务智能体。',
   services: ['企业知识库与 RAG 落地'],
-  competitors: ['澜舟智能体实验室', '北坡应用工场'],
+  competitors: [
+    { id: 'comp-lanzhou', name: '澜舟智能体实验室', aliases: ['澜舟'], domain: 'lanzhou.example' },
+    { id: 'comp-beipo', name: '北坡应用工场', aliases: [], domain: '' },
+  ],
   keywords: ['企业智能体', 'RAG 知识库'],
   capabilities: [],
   cases: [],
@@ -49,5 +52,16 @@ describe('acceptGeneratedPrompts', () => {
     })
     expect(accepted.map((item) => item.cluster)).toEqual(['category', 'comparison', 'scenario', 'brand'])
     expect(accepted[0]?.text).toContain('验收')
+  })
+})
+
+describe('acceptOwnSentiment', () => {
+  it('keeps positive, neutral, and negative, and drops anything else', () => {
+    expect(acceptOwnSentiment({ sentiment: 'positive' })).toBe('positive')
+    expect(acceptOwnSentiment({ sentiment: 'neutral' })).toBe('neutral')
+    expect(acceptOwnSentiment({ sentiment: 'negative' })).toBe('negative')
+    expect(acceptOwnSentiment({ sentiment: 'mixed' })).toBeNull()
+    expect(acceptOwnSentiment({ summary: '只有摘要' })).toBeNull()
+    expect(acceptOwnSentiment(null)).toBeNull()
   })
 })

@@ -1,5 +1,6 @@
+import { readStoredCompetitors } from '../shared/competitors.ts'
 import type { DraftEditable } from '../shared/drafts.ts'
-import type { CheckItem, ContentDraft, Cycle, CycleKind, Diagnosis, Observation, Prompt, Sentiment, Studio } from '../shared/types.ts'
+import type { BrandHit, CheckItem, ContentDraft, Cycle, CycleKind, Diagnosis, Observation, Prompt, Sentiment, Studio } from '../shared/types.ts'
 import { HttpError } from './errors.ts'
 
 interface StudioRow {
@@ -65,6 +66,7 @@ interface ObservationRow {
   cited_urls: string
   own_url_cited: number
   competitors_mentioned: string
+  brand_hits: string
   sentiment: Sentiment
   summary: string
   parser: Observation['parser']
@@ -238,13 +240,12 @@ export async function deleteCycle(db: D1Database, studioId: string, cycleId: str
 export async function listObservations(db: D1Database, studioId: string): Promise<Observation[]> {
   const { results } = await db
     .prepare(
-      `SELECT o.*, p.text AS prompt_text, p.cluster AS cluster, c.name AS cycle_name
+       `SELECT o.*, p.text AS prompt_text, p.cluster AS cluster, c.name AS cycle_name
        FROM observations o
        JOIN prompts p ON p.id = o.prompt_id
        JOIN cycles c ON c.id = o.cycle_id
        WHERE o.studio_id = ?
-       ORDER BY o.created_at DESC
-       LIMIT 200`,
+       ORDER BY o.created_at DESC`,
     )
     .bind(studioId)
     .all<ObservationRow>()
@@ -257,8 +258,8 @@ export async function insertObservation(db: D1Database, observation: Observation
       `INSERT INTO observations (
          id, studio_id, prompt_id, cycle_id, platform, answer_text,
          brand_mentioned, brand_mentions, cited_urls, own_url_cited, competitors_mentioned,
-         sentiment, summary, parser, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         brand_hits, sentiment, summary, parser, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       observation.id,
@@ -272,6 +273,7 @@ export async function insertObservation(db: D1Database, observation: Observation
       JSON.stringify(observation.citedUrls),
       observation.ownUrlCited ? 1 : 0,
       JSON.stringify(observation.competitorsMentioned),
+      JSON.stringify(observation.brandHits),
       observation.sentiment,
       observation.summary,
       observation.parser,
@@ -391,7 +393,7 @@ function mapStudio(row: StudioRow): Studio {
     website: row.website,
     positioning: row.positioning,
     services: parseStringArray(row.services),
-    competitors: parseStringArray(row.competitors),
+    competitors: readStoredCompetitors(row.competitors),
     keywords: parseStringArray(row.keywords),
     capabilities: parseStringArray(row.capabilities),
     cases: parseStringArray(row.cases),
@@ -459,6 +461,7 @@ function mapObservation(row: ObservationRow): Observation {
     citedUrls: parseStringArray(row.cited_urls),
     ownUrlCited: row.own_url_cited === 1,
     competitorsMentioned: parseStringArray(row.competitors_mentioned),
+    brandHits: parseBrandHits(row.brand_hits),
     sentiment: row.sentiment,
     summary: row.summary,
     parser: row.parser,
@@ -490,6 +493,29 @@ function parseStringArray(value: string): string[] {
   } catch {
     return []
   }
+}
+
+function parseBrandHits(value: string | null | undefined): BrandHit[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(isBrandHit)
+  } catch {
+    return []
+  }
+}
+
+function isBrandHit(value: unknown): value is BrandHit {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.key === 'string' &&
+    typeof record.name === 'string' &&
+    typeof record.mentioned === 'boolean' &&
+    (record.rank === null || typeof record.rank === 'number') &&
+    typeof record.cited === 'boolean'
+  )
 }
 
 function parseChecklist(value: string): CheckItem[] {

@@ -8,7 +8,7 @@ const studio: Studio = {
   website: 'https://example.com',
   positioning: '面向中大型企业的前场部署工程师工作室，把通用大模型做成可上线的业务智能体。',
   services: ['智能体应用从 0 到 1 共创', '企业知识库与 RAG 落地'],
-  competitors: ['澜舟智能体实验室'],
+  competitors: [{ id: 'comp-lanzhou', name: '澜舟智能体实验室', aliases: [], domain: '' }],
   keywords: ['企业智能体', 'RAG 知识库'],
   capabilities: ['企业知识库与 RAG：权限、引用溯源和评测集一起交付', '前场部署工程师驻场，和业务方一起写验收题'],
   cases: ['制造企业设备故障问答：把维修手册整理成可引用的知识库'],
