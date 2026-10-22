@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@astryxdesign/core/Badge'
 import { Button } from '@astryxdesign/core/Button'
@@ -15,7 +15,8 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { Token } from '@astryxdesign/core/Token'
 import * as stylex from '@stylexjs/stylex'
-import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
+import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeLabel, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
+import { recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
 import { assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
 import { channelLabel, DRAFT_CHANNELS, formatDraftForCopy } from '../../../shared/drafts.ts'
 import { SOURCE_LABEL } from '../../../shared/platforms.ts'
@@ -83,6 +84,9 @@ export function DraftsPage() {
   const narrow = useNarrow()
   const { studioId, studio, llm } = useStudio()
   const [prompts, setPrompts] = useState<Prompt[]>([])
+  const [mentions, setMentions] = useState<PromptMention[]>([])
+  const [autoLinked, setAutoLinked] = useState(false)
+  const appliedRecommendation = useRef('')
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([])
   const [drafts, setDrafts] = useState<ContentDraft[]>([])
   const [channel, setChannel] = useState<DraftChannel>('product-promo')
@@ -118,13 +122,17 @@ export function DraftsPage() {
   const [editSaving, setEditSaving] = useState(false)
 
   const load = async (id: string) => {
-    const [promptPayload, diagnosisPayload, draftPayload, assetPayload] = await Promise.all([
+    const [promptPayload, diagnosisPayload, draftPayload, assetPayload, observationPayload] = await Promise.all([
       api<{ prompts: Prompt[] }>(`/api/studios/${id}/prompts`),
       api<{ diagnoses: Diagnosis[] }>(`/api/studios/${id}/diagnoses`),
       api<{ drafts: ContentDraft[] }>(`/api/studios/${id}/drafts`),
       api<{ assets: Asset[] }>(`/api/studios/${id}/assets`),
+      api<{ observations: Array<{ promptId: string; brandMentioned: boolean }> }>(`/api/studios/${id}/observations`).catch(() => ({
+        observations: [],
+      })),
     ])
     setPrompts(promptPayload.prompts)
+    setMentions(observationPayload.observations.map((item) => ({ promptId: item.promptId, mentioned: item.brandMentioned })))
     setDiagnoses(diagnosisPayload.diagnoses)
     setDrafts(draftPayload.drafts)
     setAssets(assetPayload.assets)
@@ -132,9 +140,13 @@ export function DraftsPage() {
 
   useEffect(() => {
     if (!studioId) return
+    appliedRecommendation.current = ''
     setPreview(null)
     setSaved(false)
     setEditing(null)
+    setAssets([])
+    setAssetIds([])
+    setAutoLinked(false)
     load(studioId).catch((err: unknown) => setError(err instanceof Error ? err.message : '草稿加载失败'))
   }, [studioId])
 
@@ -145,6 +157,41 @@ export function DraftsPage() {
 
   const selectedDiagnosis = diagnoses.find((item) => item.id === diagnosisId)
   const gaps = selectedDiagnosis?.checklist.filter((item) => item.status !== 'pass') ?? []
+  const recommendation = useMemo(() => {
+    if (!studio) return { assetIds: [] as string[], rankedIds: [] as string[], promptId: null as string | null }
+    return recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
+  }, [studio, contentType, assets, prompts, mentions])
+  const recommendedPrompt = prompts.find((item) => item.id === recommendation.promptId) ?? null
+
+  useEffect(() => {
+    if (!studio || assets.length === 0) return
+    const key = `${studio.id}:${contentType}:${assets.map((item) => item.id).join(',')}`
+    if (appliedRecommendation.current === key) return
+    appliedRecommendation.current = key
+    const next = recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
+    setAssetIds(next.assetIds)
+    if (brandMention === 'none') {
+      setPromptId('')
+      setAutoLinked(false)
+      return
+    }
+    setPromptId(next.promptId ?? '')
+    setAutoLinked(Boolean(next.promptId))
+  }, [studio, contentType, assets, prompts, mentions])
+
+  const rerank = () => {
+    if (!studio) return
+    const next = recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
+    setAssetIds(next.assetIds)
+    if (brandMention === 'none') {
+      setPromptId('')
+      setAutoLinked(false)
+      return
+    }
+    setPromptId(next.promptId ?? '')
+    setAutoLinked(Boolean(next.promptId))
+  }
+
   const query = assetQuery.trim()
   const visibleAssets = assets.filter((item) => {
     if (!query) return true
@@ -152,14 +199,25 @@ export function DraftsPage() {
     return haystack.includes(query)
   })
   const selectedAssets = assets.filter((item) => assetIds.includes(item.id))
-  const assetRows: AssetPickRow[] = visibleAssets.map((item) => ({
-    id: item.id,
-    title: item.title,
-    typeLabel: assetTypeLabel(item.type),
-    publicityLabel: publicityLabel(item.publicity),
-    publicity: item.publicity,
-    disabled: item.publicity === 'private',
-  }))
+  const rankIndex = new Map(recommendation.rankedIds.map((id, index) => [id, index]))
+  const recommendedSet = new Set(recommendation.assetIds)
+  const orderedAssets = [...visibleAssets].sort((a, b) => {
+    const aPrivate = a.publicity === 'private' ? 1 : 0
+    const bPrivate = b.publicity === 'private' ? 1 : 0
+    if (aPrivate !== bPrivate) return aPrivate - bPrivate
+    return (rankIndex.get(a.id) ?? 999) - (rankIndex.get(b.id) ?? 999)
+  })
+  const pinnedAssets = orderedAssets.filter((item) => recommendedSet.has(item.id) || assetIds.includes(item.id))
+  const moreAssets = orderedAssets.filter((item) => !pinnedAssets.includes(item))
+  const toRows = (list: Asset[]): AssetPickRow[] =>
+    list.map((item) => ({
+      id: item.id,
+      title: item.title,
+      typeLabel: assetTypeLabel(item.type),
+      publicityLabel: publicityLabel(item.publicity),
+      publicity: item.publicity,
+      disabled: item.publicity === 'private',
+    }))
 
   const toggleAsset = (id: string, checked: boolean) => {
     setAssetIds((current) => {
@@ -331,6 +389,46 @@ export function DraftsPage() {
     source: SOURCE_LABEL[item.source] ?? item.source,
   }))
 
+  const renderAssetTable = (rows: AssetPickRow[]) => (
+    <Table
+      data={rows}
+      idKey="id"
+      density="compact"
+      hasHover
+      verticalAlign="middle"
+      columns={[
+        {
+          key: 'id',
+          header: '选',
+          width: pixel(56),
+          renderCell: (row) => (
+            <CheckboxInput
+              label={`选用${row.title}`}
+              isLabelHidden
+              value={assetIds.includes(row.id)}
+              isDisabled={row.disabled}
+              disabledMessage={row.disabled ? '不可公开，不能用于起草' : undefined}
+              onChange={(checked) => toggleAsset(row.id, checked)}
+            />
+          ),
+        },
+        {
+          key: 'typeLabel',
+          header: '类型',
+          width: pixel(88),
+          renderCell: (row) => <Badge variant="info" label={row.typeLabel} />,
+        },
+        { key: 'title', header: '标题', width: proportional(2, { minWidth: 96 }) },
+        {
+          key: 'publicityLabel',
+          header: '公开',
+          width: pixel(88),
+          renderCell: (row) => <Badge variant={publicityVariant(row.publicity)} label={row.publicityLabel} />,
+        },
+      ]}
+    />
+  )
+
   const generateButton = (
     <Button label="生成草稿" variant="primary" width="100%" onClick={() => void generate()} isLoading={generating} isDisabled={!studioId} />
   )
@@ -361,6 +459,17 @@ export function DraftsPage() {
           setChannel(channelForContentType(next.id))
         }}
       />
+      <HStack gap={2} vAlign="center" wrap="wrap">
+        <Text color="secondary">
+          {recommendation.assetIds.length > 0
+            ? `已按「${contentTypeLabel(contentType)}」推荐 ${recommendation.assetIds.length} 条素材`
+            : `「${contentTypeLabel(contentType)}」没有可公开的素材可推荐`}
+        </Text>
+        <Button label="重新推荐" size="sm" variant="ghost" onClick={rerank} isDisabled={!studio || assets.length === 0} />
+      </HStack>
+      {brandMention !== 'none' && recommendedPrompt && promptId === recommendedPrompt.id ? (
+        <Text color="secondary">已按内容类型推荐：{recommendedPrompt.text}</Text>
+      ) : null}
       <Selector
         label="渠道"
         description="决定建议落到官网的哪一类页面。内容类型会先带一个默认渠道。"
@@ -377,7 +486,19 @@ export function DraftsPage() {
         value={brandMention}
         options={IMPLANT_LEVELS.map((item) => ({ value: item.id, label: item.label, description: item.description }))}
         onChange={(value) => {
-          if (value === 'none' || value === 'light' || value === 'guide') setBrandMention(value)
+          if (value !== 'none' && value !== 'light' && value !== 'guide') return
+          setBrandMention(value)
+          if (value === 'none') {
+            if (autoLinked) {
+              setPromptId('')
+              setAutoLinked(false)
+            }
+            return
+          }
+          if (!promptId && recommendation.promptId) {
+            setPromptId(recommendation.promptId)
+            setAutoLinked(true)
+          }
         }}
       />
       <Text color="secondary">软植入从素材写故事，只在叙述里悄悄放进一两句可引用的事实，不要改成广告。</Text>
@@ -398,7 +519,7 @@ export function DraftsPage() {
       />
       <VStack gap={2}>
         <Heading level={3}>素材</Heading>
-        <Text color="secondary">勾选这次要用的事实。不可公开的素材不能用来起草。不勾选时，稿子没有客户侧的事实。</Text>
+        <Text color="secondary">已按内容类型勾上最接近的几条。可以取消或再加。不可公开的素材不能用来起草。</Text>
         {selectedAssets.length > 0 ? (
           <HStack gap={1} wrap="wrap">
             {selectedAssets.map((item) => (
@@ -415,44 +536,20 @@ export function DraftsPage() {
         )}
         <TextInput label="搜索素材" value={assetQuery} onChange={setAssetQuery} width="100%" />
         <VStack gap={2} xstyle={styles.assetList}>
-          {assetRows.length === 0 ? <Text color="secondary">没有符合搜索的素材。</Text> : null}
-          <Table
-            data={assetRows}
-            idKey="id"
-            density="compact"
-            hasHover
-            verticalAlign="middle"
-            columns={[
-              {
-                key: 'id',
-                header: '选',
-                width: pixel(56),
-                renderCell: (row) => (
-                  <CheckboxInput
-                    label={`选用${row.title}`}
-                    isLabelHidden
-                    value={assetIds.includes(row.id)}
-                    isDisabled={row.disabled}
-                    disabledMessage={row.disabled ? '不可公开，不能用于起草' : undefined}
-                    onChange={(checked) => toggleAsset(row.id, checked)}
-                  />
-                ),
-              },
-              {
-                key: 'typeLabel',
-                header: '类型',
-                width: pixel(88),
-                renderCell: (row) => <Badge variant="info" label={row.typeLabel} />,
-              },
-              { key: 'title', header: '标题', width: proportional(2, { minWidth: 96 }) },
-              {
-                key: 'publicityLabel',
-                header: '公开',
-                width: pixel(88),
-                renderCell: (row) => <Badge variant={publicityVariant(row.publicity)} label={row.publicityLabel} />,
-              },
-            ]}
-          />
+          {pinnedAssets.length === 0 && moreAssets.length === 0 ? <Text color="secondary">没有符合搜索的素材。</Text> : null}
+          {pinnedAssets.length > 0 ? renderAssetTable(toRows(pinnedAssets)) : null}
+          {moreAssets.length > 0 ? (
+            query ? (
+              <VStack gap={2}>
+                <Text color="secondary">更多素材</Text>
+                {renderAssetTable(toRows(moreAssets))}
+              </VStack>
+            ) : (
+              <Collapsible defaultIsOpen={false} trigger={`更多素材（${moreAssets.length}）`}>
+                {renderAssetTable(toRows(moreAssets))}
+              </Collapsible>
+            )
+          ) : null}
         </VStack>
         <Button label="去素材库补充" size="sm" variant="secondary" onClick={() => navigate('/library')} />
       </VStack>
@@ -465,8 +562,13 @@ export function DraftsPage() {
             value={promptId}
             hasSearch
             options={[{ value: '', label: '不关联题目' }, ...prompts.map((item) => ({ value: item.id, label: item.text }))]}
-            onChange={(value) => setPromptId(value || '')}
+            onChange={(value) => {
+              const next = value || ''
+              setPromptId(next)
+              setAutoLinked(Boolean(next) && next === recommendation.promptId)
+            }}
           />
+          {promptId && promptId === recommendation.promptId ? <Text color="secondary">已按内容类型推荐</Text> : null}
           {brandMention === 'light' && promptId ? <Text color="secondary">{SOFT_IMPLANT_HINT}</Text> : null}
           {brandMention === 'none' && promptId ? <Text color="secondary">不植入时，这道题不会写进正文。</Text> : null}
           <Selector
