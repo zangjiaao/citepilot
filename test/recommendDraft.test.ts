@@ -75,7 +75,7 @@ describe('recommendDraftSelection', () => {
     expect(result.assetIds).toContain('case')
     expect(result.assetIds).toContain('outcome')
     expect(result.assetIds).not.toContain('private')
-    expect(result.assetIds.length).toBeLessThanOrEqual(3)
+    expect(result.assetIds.length).toBeLessThanOrEqual(5)
     expect(result.rankedIds).not.toContain('private')
     expect(result.assetIds.every((id) => library.some((item) => item.id === id))).toBe(true)
   })

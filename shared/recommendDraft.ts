@@ -57,7 +57,7 @@ export function recommendDraftSelection(input: {
   const ranked = usable
     .map((item) => ({ id: item.id, score: scoreAsset(item, input.contentType, input.studio) }))
     .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
-  const cap = SHORT_TYPES.has(input.contentType) ? 2 : 3
+  const cap = SHORT_TYPES.has(input.contentType) ? 2 : 5
   const strong = ranked.filter((item) => item.score >= STRONG_SCORE).length
   const count = ranked.length === 0 ? 0 : Math.min(cap, Math.max(1, Math.min(strong, cap)))
   return {

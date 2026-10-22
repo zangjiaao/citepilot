@@ -4,6 +4,7 @@ import { Badge } from '@astryxdesign/core/Badge'
 import { Button } from '@astryxdesign/core/Button'
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import { Collapsible } from '@astryxdesign/core/Collapsible'
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
 import { HStack, Layout, LayoutContent, LayoutFooter, LayoutPanel, VStack } from '@astryxdesign/core/Layout'
@@ -14,11 +15,10 @@ import { Table, pixel, proportional } from '@astryxdesign/core/Table'
 import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
-import { Token } from '@astryxdesign/core/Token'
 import * as stylex from '@stylexjs/stylex'
-import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeForAsset, contentTypeLabel, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
+import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeForAsset, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
 import { recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
-import { assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
+import { ASSET_TYPES, assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
 import { plainTextFromRich } from '../../../shared/richText.ts'
 import { channelLabel, DRAFT_CHANNELS, formatDraftForCopy } from '../../../shared/drafts.ts'
 import { SOURCE_LABEL } from '../../../shared/platforms.ts'
@@ -51,10 +51,6 @@ const styles = stylex.create({
     minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
-  },
-  assetList: {
-    maxHeight: 320,
-    overflow: 'auto',
   },
 })
 
@@ -106,7 +102,10 @@ export function DraftsPage() {
   const [contentType, setContentType] = useState<ContentType>('case-breakdown')
   const [assetIds, setAssetIds] = useState<string[]>([])
   const [assets, setAssets] = useState<Asset[]>([])
-  const [assetQuery, setAssetQuery] = useState('')
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerIds, setPickerIds] = useState<string[]>([])
+  const [pickerQuery, setPickerQuery] = useState('')
+  const [pickerType, setPickerType] = useState('')
   const [brandMention, setBrandMention] = useState<BrandMention>('none')
   const [audience, setAudience] = useState('')
   const [tone, setTone] = useState('')
@@ -230,7 +229,7 @@ export function DraftsPage() {
     if (appliedRecommendation.current === key) return
     appliedRecommendation.current = key
     const next = recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
-    const cap = contentType === 'short-post' || contentType === 'thread' ? 2 : 3
+    const cap = contentType === 'short-post' || contentType === 'thread' ? 2 : 5
     const pinned = libraryPin ? assets.find((item) => item.id === libraryPin && item.publicity !== 'private') : undefined
     const ids = pinned ? [pinned.id, ...next.assetIds.filter((id) => id !== pinned.id)].slice(0, cap) : next.assetIds
     setAssetIds(ids)
@@ -257,25 +256,33 @@ export function DraftsPage() {
     setAutoLinked(Boolean(next.promptId))
   }
 
-  const query = assetQuery.trim()
-  const visibleAssets = assets.filter((item) => {
-    if (!query) return true
-    const haystack = `${item.title} ${plainTextFromRich(item.body)} ${item.tags.join(' ')} ${assetTypeLabel(item.type)}`
-    return haystack.includes(query)
-  })
-  const selectedAssets = assets.filter((item) => assetIds.includes(item.id))
-  const rankIndex = new Map(recommendation.rankedIds.map((id, index) => [id, index]))
-  const recommendedSet = new Set(recommendation.assetIds)
-  const orderedAssets = [...visibleAssets].sort((a, b) => {
-    const aPrivate = a.publicity === 'private' ? 1 : 0
-    const bPrivate = b.publicity === 'private' ? 1 : 0
-    if (aPrivate !== bPrivate) return aPrivate - bPrivate
-    return (rankIndex.get(a.id) ?? 999) - (rankIndex.get(b.id) ?? 999)
-  })
-  const pinnedAssets = orderedAssets.filter((item) => recommendedSet.has(item.id) || assetIds.includes(item.id))
-  const moreAssets = orderedAssets.filter((item) => !pinnedAssets.includes(item))
-  const toRows = (list: Asset[]): AssetPickRow[] =>
-    list.map((item) => ({
+  const recommendedAssets = recommendation.assetIds
+    .slice(0, 5)
+    .map((id) => assets.find((item) => item.id === id))
+    .filter((item): item is Asset => Boolean(item))
+  const checklist = [
+    ...recommendedAssets,
+    ...assetIds
+      .filter((id) => !recommendedAssets.some((item) => item.id === id))
+      .map((id) => assets.find((item) => item.id === id))
+      .filter((item): item is Asset => Boolean(item)),
+  ]
+  const pickerRank = new Map(recommendation.rankedIds.map((id, index) => [id, index]))
+  const pickerQueryText = pickerQuery.trim()
+  const pickerRows: AssetPickRow[] = assets
+    .filter((item) => (pickerType ? item.type === pickerType : true))
+    .filter((item) => {
+      if (!pickerQueryText) return true
+      const haystack = `${item.title} ${plainTextFromRich(item.body)} ${item.tags.join(' ')} ${assetTypeLabel(item.type)}`
+      return haystack.includes(pickerQueryText)
+    })
+    .sort((a, b) => {
+      const aPrivate = a.publicity === 'private' ? 1 : 0
+      const bPrivate = b.publicity === 'private' ? 1 : 0
+      if (aPrivate !== bPrivate) return aPrivate - bPrivate
+      return (pickerRank.get(a.id) ?? 999) - (pickerRank.get(b.id) ?? 999)
+    })
+    .map((item) => ({
       id: item.id,
       title: item.title,
       typeLabel: assetTypeLabel(item.type),
@@ -289,6 +296,19 @@ export function DraftsPage() {
       if (checked) return current.includes(id) ? current : [...current, id]
       return current.filter((item) => item !== id)
     })
+  }
+
+  const openPicker = () => {
+    setPickerIds(assetIds)
+    setPickerQuery('')
+    setPickerType('')
+    setPickerOpen(true)
+  }
+
+  const applyPicker = () => {
+    const allowed = new Set(assets.filter((item) => item.publicity !== 'private').map((item) => item.id))
+    setAssetIds(pickerIds.filter((id) => allowed.has(id)))
+    setPickerOpen(false)
   }
 
   const generate = async () => {
@@ -429,10 +449,15 @@ export function DraftsPage() {
             <CheckboxInput
               label={`选用${row.title}`}
               isLabelHidden
-              value={assetIds.includes(row.id)}
+              value={pickerIds.includes(row.id)}
               isDisabled={row.disabled}
               disabledMessage={row.disabled ? '不可公开，不能用于起草' : undefined}
-              onChange={(checked) => toggleAsset(row.id, checked)}
+              onChange={(checked) => {
+                setPickerIds((current) => {
+                  if (checked) return current.includes(row.id) ? current : [...current, row.id]
+                  return current.filter((id) => id !== row.id)
+                })
+              }}
             />
           ),
         },
@@ -484,14 +509,35 @@ export function DraftsPage() {
           setChannel(channelForContentType(next.id))
         }}
       />
-      <HStack gap={2} vAlign="center" wrap="wrap">
-        <Text color="secondary">
-          {recommendation.assetIds.length > 0
-            ? `已按「${contentTypeLabel(contentType)}」推荐 ${recommendation.assetIds.length} 条素材`
-            : `「${contentTypeLabel(contentType)}」没有可公开的素材可推荐`}
-        </Text>
-        <Button label="重新推荐" size="sm" variant="ghost" onClick={rerank} isDisabled={!studio || assets.length === 0} />
-      </HStack>
+      <VStack gap={2}>
+        <HStack gap={2} vAlign="center" wrap="wrap">
+          <Heading level={3}>推荐素材</Heading>
+          <Button label="重新推荐" size="sm" variant="ghost" onClick={rerank} isDisabled={!studio || assets.length === 0} />
+        </HStack>
+        <Text color="secondary">已按内容类型推荐，可取消勾选或打开素材库另选</Text>
+        {checklist.length === 0 ? (
+          <Text color="secondary">这一类型还没有可公开的素材。</Text>
+        ) : (
+          <VStack gap={2}>
+            {checklist.map((item) => (
+              <HStack key={item.id} gap={2} vAlign="center">
+                <CheckboxInput
+                  label={`选用${item.title}`}
+                  isLabelHidden
+                  value={assetIds.includes(item.id)}
+                  onChange={(checked) => toggleAsset(item.id, checked)}
+                />
+                <Badge variant="info" label={assetTypeLabel(item.type)} />
+                <StackItem size="fill">
+                  <Text>{item.title}</Text>
+                </StackItem>
+                {item.publicity === 'anonymous' ? <Badge variant="warning" label="匿名" /> : null}
+              </HStack>
+            ))}
+          </VStack>
+        )}
+        <Button label="从素材库挑选" size="sm" variant="secondary" onClick={openPicker} />
+      </VStack>
       {brandMention !== 'none' && recommendedPrompt && promptId === recommendedPrompt.id ? (
         <Text color="secondary">已按内容类型推荐：{recommendedPrompt.text}</Text>
       ) : null}
@@ -542,42 +588,6 @@ export function DraftsPage() {
           if (value === 'short' || value === 'medium' || value === 'long') setLength(value)
         }}
       />
-      <VStack gap={2}>
-        <Heading level={3}>素材</Heading>
-        <Text color="secondary">已按内容类型勾上最接近的几条。可以取消或再加。不可公开的素材不能用来起草。</Text>
-        {selectedAssets.length > 0 ? (
-          <HStack gap={1} wrap="wrap">
-            {selectedAssets.map((item) => (
-              <Token
-                key={item.id}
-                label={item.title}
-                size="sm"
-                onRemove={() => toggleAsset(item.id, false)}
-              />
-            ))}
-          </HStack>
-        ) : (
-          <Text color="secondary">还没有选素材。</Text>
-        )}
-        <TextInput label="搜索素材" value={assetQuery} onChange={setAssetQuery} width="100%" />
-        <VStack gap={2} xstyle={styles.assetList}>
-          {pinnedAssets.length === 0 && moreAssets.length === 0 ? <Text color="secondary">没有符合搜索的素材。</Text> : null}
-          {pinnedAssets.length > 0 ? renderAssetTable(toRows(pinnedAssets)) : null}
-          {moreAssets.length > 0 ? (
-            query ? (
-              <VStack gap={2}>
-                <Text color="secondary">更多素材</Text>
-                {renderAssetTable(toRows(moreAssets))}
-              </VStack>
-            ) : (
-              <Collapsible defaultIsOpen={false} trigger={`更多素材（${moreAssets.length}）`}>
-                {renderAssetTable(toRows(moreAssets))}
-              </Collapsible>
-            )
-          ) : null}
-        </VStack>
-        <Button label="去素材库补充" size="sm" variant="secondary" onClick={() => navigate('/library')} />
-      </VStack>
       <Collapsible defaultIsOpen={false} trigger="高级">
         <VStack gap={3}>
           <Text color="secondary">关联题目、诊断和缺口。不选也能生成。</Text>
@@ -783,6 +793,40 @@ export function DraftsPage() {
           {workspace}
         </StackItem>
       </VStack>
+      <Dialog isOpen={pickerOpen} onOpenChange={setPickerOpen} width={760} maxHeight="80dvh" purpose="form">
+        <Layout
+          height="fill"
+          header={<DialogHeader title="从素材库挑选" subtitle="勾选后点确定。不可公开的素材不能用来起草。" onOpenChange={setPickerOpen} />}
+          content={
+            <LayoutContent>
+              <VStack gap={3}>
+                <HStack gap={2} wrap="wrap" vAlign="end">
+                  <StackItem size="fill">
+                    <TextInput label="搜索" value={pickerQuery} onChange={setPickerQuery} width="100%" />
+                  </StackItem>
+                  <Selector
+                    label="类型"
+                    value={pickerType}
+                    options={[{ value: '', label: '全部类型' }, ...ASSET_TYPES.map((item) => ({ value: item.id, label: item.label }))]}
+                    onChange={(value) => setPickerType(value || '')}
+                  />
+                </HStack>
+                {pickerRows.length === 0 ? <Text color="secondary">没有符合的素材。</Text> : renderAssetTable(pickerRows)}
+              </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter hasDivider>
+              <HStack gap={2} vAlign="center">
+                <Button label="去素材库" variant="ghost" onClick={() => navigate('/library')} />
+                <StackItem size="fill" />
+                <Button label="取消" variant="secondary" onClick={() => setPickerOpen(false)} />
+                <Button label="确定" variant="primary" onClick={applyPicker} />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
+      </Dialog>
       <style>{`.citepilot-draft-body{height:100%;min-height:0;display:flex;flex-direction:column}.citepilot-draft-body>div{flex:1 1 auto;min-height:0;height:100%}.citepilot-draft-body>div>div:last-child{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}.citepilot-draft-body>div>div:last-child>div{flex:1 1 auto;min-height:120px;display:flex;flex-direction:column}.citepilot-draft-body textarea{flex:1 1 auto;min-height:0;height:auto;resize:none}`}</style>
     </PageFrame>
   )
