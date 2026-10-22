@@ -173,13 +173,17 @@ export function draftFromAssets(studio: Studio, assets: Asset[], channelPath: st
       if (item.details.quoteAuthorized && item.details.quote.trim()) lines.push(`客户原话：「${item.details.quote.trim()}」`)
       return lines.filter(Boolean)
     }),
-    mention === 'none' ? '' : mention === 'light' ? studio.name : `想看具体做法，可以从 ${studio.name} 的公开说明开始：${studio.website}`,
+    mention === 'guide' ? `想看具体做法，可以从 ${studio.name} 的公开说明开始：${studio.website}` : '',
   ].filter((part) => part !== '')
   const fact = metric ? `${metric.name}从 ${metric.before}${metric.unit} 到 ${metric.after}${metric.unit}` : clip(opener, 80)
+  const storyCites = [
+    `客户的${fact}。`,
+    assets[1] ? `另一处材料是：${clip(assets[1].title, 60)}` : `做法写在素材里：${clip(assets[0]?.title || '待补充', 60)}`,
+  ]
   const cites =
-    mention === 'none'
-      ? [`客户的${fact}。`, assets[1] ? `另一处材料是：${clip(assets[1].title, 60)}` : `做法写在素材里：${clip(assets[0]?.title || '待补充', 60)}`]
-      : [`${studio.name}记录到：客户的${fact}。`, `${studio.name}公开的一处材料是：${clip(assets[0]?.title || studio.name, 40)}`]
+    mention === 'guide'
+      ? [`${studio.name}记录到：客户的${fact}。`, `${studio.name}公开的一处材料是：${clip(assets[0]?.title || studio.name, 40)}`]
+      : storyCites
   const titleSource = assets[0]?.title || '客户侧的一处变化'
   return {
     title: clip(titleSource.length >= 4 ? titleSource : `${titleSource}的变化`, 80),

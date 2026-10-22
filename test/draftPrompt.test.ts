@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyBrandPageSave, blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { emptyDetails, readAssetDraft, type Asset } from '../shared/assets.ts'
-import { assembleDraftPrompt, NO_FABRICATION_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, materialDraft, NO_FABRICATION_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE } from '../shared/draftPrompt.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -74,7 +74,9 @@ describe('assembleDraftPrompt', () => {
     )
     expect(prompt.system).toContain(NO_FABRICATION_RULE)
     expect(prompt.system).toContain(SHOW_DONT_TELL_RULE)
-    expect(prompt.system).toContain('不提品牌')
+    expect(prompt.system).toContain('不植入')
+    expect(prompt.system).toContain('不要写成问答')
+    expect(prompt.user).toContain('不要把关联题目写进标题或正文')
     expect(prompt.user).toContain('维修手册散落')
     expect(prompt.user).toContain('单次查询')
     expect(prompt.user).toContain('45')
@@ -87,6 +89,32 @@ describe('assembleDraftPrompt', () => {
     const gaps = profileGaps(studio, { audience: '', contentType: 'case-breakdown', tone: '', length: 'short', allowBragging: false, brandMention: 'none' }, [])
     expect(gaps.join(' ')).toContain('素材库')
   })
+
+  it('tells a soft implant to answer a linked question inside the story', () => {
+    const prompt = assembleDraftPrompt(
+      studio,
+      { audience: '', contentType: 'case-breakdown', tone: '', length: 'medium', allowBragging: false, brandMention: 'light' },
+      { channelLabel: '官网长文', promptText: '知识库怎么验收？' },
+      [metricAsset],
+    )
+    expect(prompt.system).toContain('软植入')
+    expect(prompt.system).toContain('不能改成广告')
+    expect(prompt.system).toContain('不要当标题或开头')
+    expect(prompt.system).toContain('知识库怎么验收？')
+    expect(prompt.system).toContain('不要写「我们是行业领先」')
+    expect(prompt.user).toContain('不要以题目开头')
+  })
+
+  it('keeps an intentional recommendation for the clear call to action', () => {
+    const prompt = assembleDraftPrompt(
+      studio,
+      { audience: '', contentType: 'case-breakdown', tone: '', length: 'short', allowBragging: false, brandMention: 'guide' },
+      { channelLabel: '官网长文' },
+      [metricAsset],
+    )
+    expect(prompt.system).toContain('明确种草')
+    expect(prompt.system).toContain('下一步')
+  })
 })
 
 describe('self check', () => {
@@ -96,6 +124,47 @@ describe('self check', () => {
     expect(polished.body).not.toContain('行业领先')
     expect(polished.body).not.toContain('99')
     expect(polished.body.includes('45') || polished.body.includes('【待补充')).toBe(true)
+  })
+
+  it('flags hard-sell filler and rewrites it toward a customer fact', () => {
+    const polished = rewriteGenericSentences('立即咨询，我们赋能数字化，一眼广告腔。', [metricAsset], false)
+    expect(polished.flags.length).toBeGreaterThan(0)
+    expect(polished.body).not.toContain('立即咨询')
+    expect(polished.body).not.toContain('赋能数字化')
+    expect(polished.body).not.toContain('广告腔')
+    expect(polished.body).toContain('45')
+  })
+})
+
+describe('implant intensity', () => {
+  it('writes a soft implant as a story and does not open with the linked question', () => {
+    const draft = materialDraft(studio, [metricAsset, ideaAsset], '/guides/how-we-deliver', 'light', '知识库怎么验收？')
+    expect(draft.body.startsWith('客户的')).toBe(true)
+    expect(draft.body).not.toContain('知识库怎么验收')
+    expect(draft.body).not.toContain('问：')
+    expect(draft.body).not.toContain(studio.name)
+    expect(draft.body).toContain('45')
+    expect(draft.body).toContain('同一件事里还有一处可以核对')
+  })
+
+  it('leaves the brand out of a pure share and keeps one trailing mention when the story already named it', () => {
+    const plain = materialDraft(studio, [metricAsset], '/guides/how-we-deliver', 'none', '知识库怎么验收？')
+    expect(plain.body).not.toContain(studio.name)
+    expect(plain.body).not.toContain('知识库怎么验收')
+    const named = applyBrandMention(
+      {
+        title: '查询变快之后',
+        body: `先写${studio.name}怎么做。后来${studio.name}又出现一次。客户的单次查询从 45 分钟变成 8 分钟。`,
+        citeSentences: [`${studio.name}记录到查询变快。`, '值班员原来要翻三本手册。'],
+        urlHint: 'https://www.oak-studio.org/guides/how-we-deliver',
+      },
+      studio.name,
+      studio.website,
+      'light',
+    )
+    expect(named.body.split(studio.name).length - 1).toBe(1)
+    expect(named.body.trim().endsWith(studio.name)).toBe(true)
+    expect(named.citeSentences.every((item) => !item.includes(studio.name))).toBe(true)
   })
 })
 

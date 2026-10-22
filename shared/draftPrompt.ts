@@ -37,10 +37,21 @@ const CONTENT_IDS = new Set<string>(CONTENT_TYPES.map((item) => item.id))
 const LENGTHS = new Set<string>(['short', 'medium', 'long'])
 
 const GENERIC =
-  /赋能|抓手|闭环|颗粒度|一站式|全方位|极致|我们致力于|专业的团队|专业团队|丰富的经验|丰富经验|优质的服务|优质服务|数字化转型|无缝|降本增效/
+  /赋能|抓手|闭环|颗粒度|一站式|全方位|极致|我们致力于|专业的团队|专业团队|丰富的经验|丰富经验|优质的服务|优质服务|数字化转型|无缝|降本增效|水文/
 
 const BRAG =
   /行业领先|业内领先|获奖|荣获|荣誉|头部|顶级|最强|第一品牌|百人团队|数百人|团队规模|国家级|独角兽|行业标杆|遥遥领先|秀肌肉|领军|权威/
+
+const HARD_SELL =
+  /硬广|立即咨询|马上咨询|欢迎咨询|点击咨询|行业领先|赋能数字化|一眼广告|广告腔|立刻下单|限时优惠|扫码咨询/
+
+export const IMPLANT_LEVELS = [
+  { id: 'none', label: '不植入', description: '只分享素材里的案例或产品，不写品牌名，也不硬加问答。' },
+  { id: 'light', label: '软植入', description: '故事还是主体。品牌名最多在结尾出现一次，题目只在叙述里顺手回答。' },
+  { id: 'guide', label: '明确种草', description: '有意推广时用。结尾写出品牌名、官网和下一步。' },
+] as const
+
+export const SOFT_IMPLANT_HINT = '会把这道题的答案自然写进故事里'
 
 export function isContentType(value: string): value is ContentType {
   return CONTENT_IDS.has(value)
@@ -142,12 +153,13 @@ export function assembleDraftPrompt(
           : options.length === 'long'
             ? '1800 到 2800 字'
             : '900 到 1400 字'
-  const mentionRule =
+  const mentionRule = implantRule(options.brandMention, extra.promptText)
+  const citeRule =
     options.brandMention === 'none'
-      ? '品牌露出：不提品牌。正文和可引用句都不要出现品牌名，这篇会从品牌自己的账号发出。'
+      ? 'citeSentences 是 2 到 4 句从故事里抽出的事实，不要出现品牌名，也不要写成问答。urlHint 必须包含给定官网主机名。'
       : options.brandMention === 'light'
-        ? '品牌露出：轻度署名。正文讲客户的变化，品牌名只在最后一行出现一次。'
-        : '品牌露出：明确引导。正文仍以客户结果为主，结尾写出品牌名、官网和下一步。'
+        ? 'citeSentences 是 2 到 4 句故事里已经出现的事实，可以不带品牌名。不要把题目原句当成引用句。urlHint 必须包含给定官网主机名。'
+        : 'citeSentences 是 2 到 4 句可引用的话。品牌名可以出现，但不要每句都是广告。urlHint 必须包含给定官网主机名。'
   const system = [
     '你在把几条素材合成一篇可以分享的内容。先选一个钩子，再按渠道安排结构，不要逐条复述素材库。',
     SHOW_DONT_TELL_RULE,
@@ -156,10 +168,14 @@ export function assembleDraftPrompt(
     options.allowBragging ? '用户允许提到素材里已经写明的奖项或规模，仍然不能编造。' : '不要写奖项、人数、融资或行业领先。',
     '数字只能来自已授权的指标，或素材正文里已经出现的数字。',
     '只输出 JSON：{"title":"","body":"","citeSentences":["",""],"urlHint":""}。',
-    options.brandMention === 'none'
-      ? 'citeSentences 不要出现品牌名。urlHint 必须包含给定官网主机名。'
-      : 'citeSentences 是 2 到 4 句可引用的话，每句带上品牌名。urlHint 必须包含给定官网主机名。',
+    citeRule,
   ].join('')
+  const questionLine =
+    options.brandMention === 'none'
+      ? '题目：这篇不植入，不要把关联题目写进标题或正文，也不要另起问答。'
+      : options.brandMention === 'light'
+        ? `题目：${extra.promptText || '无'}。若有题目，只在故事中段用一段短叙述回答，不要以题目开头，不要标注 GEO。`
+        : `题目：${extra.promptText || '无'}`
   const user = [
     `内容类型：${contentTypeLabel(options.contentType)}`,
     `发布渠道：${extra.channelLabel}`,
@@ -170,7 +186,7 @@ export function assembleDraftPrompt(
     `品牌资料只作背景。定位：${studio.positioning || '未填'}`,
     `禁用词：${studio.bannedWords || '无'}`,
     `不能说的内容：${studio.compliance || '不要承诺素材里没有的效果'}`,
-    `题目：${extra.promptText || '无'}`,
+    questionLine,
     `诊断缺口：${extra.gapLabel || '无'} ${extra.gapDetail || ''}`.trim(),
   ].join('\n')
   return { system, user }
@@ -186,8 +202,9 @@ export function rewriteGenericSentences(body: string, assets: Asset[], allowBrag
     if (!sentence || sentence.includes('【待补充')) return part
     const brag = !allowBragging && BRAG.test(sentence)
     const generic = GENERIC.test(sentence)
+    const hardSell = HARD_SELL.test(sentence)
     const stray = [...(sentence.match(/\d+(?:\.\d+)?/g) ?? [])].some((item) => !allowed.has(item))
-    if (!brag && !generic && !stray) return part
+    if (!brag && !generic && !hardSell && !stray) return part
     flags.push(sentence.replace(/\s+/g, ' ').slice(0, 80))
     if (!usedFact) {
       const fact = assets.flatMap((item) => item.details.metrics.filter((metric) => metric.customerAuthorized))[0]
@@ -195,15 +212,27 @@ export function rewriteGenericSentences(body: string, assets: Asset[], allowBrag
         usedFact = true
         return part.replace(sentence, `客户的${fact.name}从 ${fact.before}${fact.unit} 变成 ${fact.after}${fact.unit}。`)
       }
+      const problem = assets.map((item) => item.details.problem.trim()).find(Boolean)
+      if (problem && (brag || generic || hardSell)) {
+        usedFact = true
+        return part.replace(sentence, `${problem}。`)
+      }
     }
-    return part.replace(sentence, stray ? '【待补充：客户授权公开的前后数据】' : '【待补充：把这句自夸换成客户侧的问题或变化】')
+    return part.replace(sentence, stray ? '【待补充：客户授权公开的前后数据】' : '【待补充：把这句硬广或空话换成客户侧的问题或变化】')
   })
   return { body: next.join(''), flags }
 }
 
 export function applyBrandMention(brief: DraftBrief, brand: string, website: string, mention: BrandMention): DraftBrief {
   if (mention === 'light') {
-    return { ...brief, body: brief.body.includes(brand) ? brief.body : `${brief.body.trim()}\n\n${brand}` }
+    const stripped = stripBrand(brief.body, brand)
+    const body = brand && brief.body.includes(brand) ? `${stripped.trim()}\n\n${brand}` : stripped
+    const citeSentences = brief.citeSentences.map((item) => stripBrand(item, brand)).filter((item) => item.length >= 12)
+    const padded =
+      citeSentences.length >= 2
+        ? citeSentences
+        : [...citeSentences, ...body.split('\n').map((item) => item.trim()).filter((item) => item.length >= 12 && item !== brand)]
+    return { ...brief, body, citeSentences: padded.slice(0, 5) }
   }
   if (mention === 'guide') {
     const line = `想看具体做法，可以从 ${brand} 的公开说明开始：${website}`
@@ -220,8 +249,39 @@ export function applyBrandMention(brief: DraftBrief, brand: string, website: str
   }
 }
 
-export function materialDraft(studio: Studio, assets: Asset[], channelPath: string, mention: BrandMention): DraftBrief {
-  return applyBrandMention(draftFromAssets(studio, assets, channelPath, mention), studio.name, studio.website, mention)
+export function materialDraft(
+  studio: Studio,
+  assets: Asset[],
+  channelPath: string,
+  mention: BrandMention,
+  promptText = '',
+): DraftBrief {
+  const base = draftFromAssets(studio, assets, channelPath, mention)
+  const aside = mention === 'light' ? softAside(assets) : ''
+  const withAside = aside && promptText.trim() ? { ...base, body: `${base.body.trim()}\n\n${aside}` } : base
+  return applyBrandMention(withAside, studio.name, studio.website, mention)
+}
+
+function implantRule(mention: BrandMention, promptText?: string): string {
+  if (mention === 'none') {
+    return '植入强度：不植入。这是从素材写起的案例或产品分享。正文、标题和可引用句都不要出现品牌名。不要写成问答，不要用题目当标题或开头，也不要另起「问/答」或 GEO 问答块。'
+  }
+  if (mention === 'light') {
+    const question = promptText?.trim()
+      ? `关联题目只作一个顺手回答的角度，不要当标题或开头：${promptText.trim()}。用一段短的自然叙述或旁白把答案写进故事中段，不要标注 GEO，不要堆 FAQ。`
+      : '没有关联题目时，不要为了被引用而编一段问答。'
+    return `植入强度：软植入。文章仍是从素材写起的故事，不能改成广告。先写客户的问题、前后数据或一处细节。最多悄悄放进 1 到 2 句可引用的事实。品牌名最多在结尾出现一次，也可以完全不出现。不要写「我们是行业领先」。${question}`
+  }
+  return '植入强度：明确种草。读者有意了解品牌时再用。正文仍从客户问题或素材细节写起，结尾可以写出品牌名、官网和一句下一步。不要用行业领先、立即咨询、赋能数字化或一眼广告腔。'
+}
+
+function softAside(assets: Asset[]): string {
+  const detail = assets.map((item) => item.details.howItWorks.trim() || item.details.approach.trim()).find(Boolean)
+  if (detail) return `具体到做法上，${detail.endsWith('。') ? detail : `${detail}。`}`
+  const second = assets[1]?.title.trim()
+  if (second) return `同一件事里还有一处可以核对：${second}。`
+  const problem = assets.map((item) => item.details.problem.trim()).find(Boolean)
+  return problem ? `当时卡住的是：${problem.endsWith('。') ? problem : `${problem}。`}` : ''
 }
 
 function stripBrand(text: string, brand: string): string {

@@ -54,14 +54,18 @@ export function acceptDraft(raw: unknown, brand: string, mention: BrandMention =
   const urlHint = typeof record.urlHint === 'string' ? record.urlHint.trim() : ''
   if (title.length < 4 || title.length > 80) return null
   if (mention === 'none') body = stripName(body, brand)
+  if (mention === 'light' && brand) {
+    const times = body.split(brand).length - 1
+    if (times > 1) body = `${stripName(body, brand).trim()}\n\n${brand}`
+  }
   if (body.length < 80 || body.length > 8000) return null
-  if (mention !== 'none' && (!brand || !body.includes(brand))) return null
+  if (mention === 'guide' && (!brand || !body.includes(brand))) return null
   if (mention === 'none' && brand && body.includes(brand)) return null
   if (urlHint.length < 8 || urlHint.length > 240) return null
   const citeSentences = asStringArray(record.citeSentences)
     .map((item) => item.replace(/\s+/g, ' ').trim().slice(0, 160))
-    .map((item) => (mention === 'none' ? stripName(item, brand) : item))
-    .filter((item) => item.length >= 12 && (mention === 'none' || item.includes(brand)))
+    .map((item) => (mention === 'guide' ? item : stripName(item, brand)))
+    .filter((item) => item.length >= 12 && (mention !== 'guide' || item.includes(brand)))
     .slice(0, 6)
   if (citeSentences.length < 2) return null
   return { title, body, citeSentences, urlHint }

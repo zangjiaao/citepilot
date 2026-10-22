@@ -524,7 +524,10 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
   const channel = typeof record.contentType === 'string' && isContentType(record.contentType) ? channelForContentType(options.contentType) : channelRaw
   const channelMeta = DRAFT_CHANNELS.find((item) => item.id === channel) ?? DRAFT_CHANNELS[0]
   const context = { studio, channel, promptText, gapLabel, gapDetail }
-  let brief = selected.length > 0 ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention) : templateDraft(context)
+  let brief =
+    selected.length > 0
+      ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention, options.brandMention === 'light' ? promptText : '')
+      : templateDraft(context)
   let source: DraftPreview['source'] = 'template'
   const writer = await resolveLlm(c.env.DB, c.env, 'generate')
   if (writer.enabled) {
@@ -553,12 +556,13 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     try {
       const raw = await completeJson(
         writer,
-        '你在做自夸和数字自检。把标出的句子改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。只输出 JSON：{"body":"..."}',
+        '你在做硬广和水文自检。硬广、立即咨询、行业领先、赋能数字化、一眼广告腔，以及自夸和未授权数字，都改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。软植入时品牌名最多在结尾出现一次。只输出 JSON：{"body":"..."}',
         `要改的句子：${polished.flags.join('\n')}\n原文：${brief.body}`,
         0.2,
       )
       const next = raw && typeof raw === 'object' && typeof (raw as { body?: unknown }).body === 'string' ? (raw as { body: string }).body.trim() : ''
-      const brandOk = options.brandMention === 'none' ? !next.includes(studio.name) : next.includes(studio.name)
+      const mentions = studio.name ? next.split(studio.name).length - 1 : 0
+      const brandOk = options.brandMention === 'none' ? mentions === 0 : options.brandMention === 'light' ? mentions <= 1 : mentions >= 1
       if (next.length >= 80 && brandOk) brief = { ...brief, body: next }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
