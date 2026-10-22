@@ -4,6 +4,7 @@ import { Badge } from '@astryxdesign/core/Badge'
 import { Button } from '@astryxdesign/core/Button'
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import { Collapsible } from '@astryxdesign/core/Collapsible'
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
 import { HStack, Layout, LayoutContent, LayoutFooter, LayoutPanel, VStack } from '@astryxdesign/core/Layout'
@@ -15,7 +16,7 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { Token } from '@astryxdesign/core/Token'
 import * as stylex from '@stylexjs/stylex'
-import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeLabel, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
+import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeForChannel, contentTypeLabel, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
 import { recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
 import { assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
 import { channelLabel, DRAFT_CHANNELS, formatDraftForCopy } from '../../../shared/drafts.ts'
@@ -40,9 +41,8 @@ const styles = stylex.create({
 interface DraftRow extends Record<string, unknown> {
   id: string
   when: string
-  channel: string
+  contentType: string
   title: string
-  source: string
 }
 
 interface AssetPickRow extends Record<string, unknown> {
@@ -120,6 +120,7 @@ export function DraftsPage() {
   const [editCites, setEditCites] = useState('')
   const [editUrl, setEditUrl] = useState('')
   const [editSaving, setEditSaving] = useState(false)
+  const [boxOpen, setBoxOpen] = useState(false)
 
   const load = async (id: string) => {
     const [promptPayload, diagnosisPayload, draftPayload, assetPayload, observationPayload] = await Promise.all([
@@ -337,6 +338,7 @@ export function DraftsPage() {
     setEditUrl(item.urlHint)
     setError('')
     setNotice('')
+    setBoxOpen(false)
   }
 
   const saveEdit = async () => {
@@ -369,25 +371,19 @@ export function DraftsPage() {
     }
   }
 
-  const duplicate = async (id: string) => {
-    if (!studioId) return
-    setError('')
-    try {
-      const result = await api<{ draft: ContentDraft }>(`/api/studios/${studioId}/drafts/${id}/copy`, { method: 'POST' })
-      setNotice(`已另存为「${result.draft.title}」。`)
-      await load(studioId)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '另存失败')
-    }
-  }
-
   const rows: DraftRow[] = drafts.map((item) => ({
     id: item.id,
     when: formatTime(item.updatedAt || item.createdAt),
-    channel: channelLabel(item.channel),
+    contentType: contentTypeLabel(contentTypeForChannel(item.channel)),
     title: item.title,
-    source: SOURCE_LABEL[item.source] ?? item.source,
   }))
+
+  const draftBoxButton = (
+    <HStack gap={1} vAlign="center">
+      <Button label="草稿箱" size="sm" variant="secondary" onClick={() => setBoxOpen(true)} />
+      {drafts.length > 0 ? <Badge variant="neutral" label={String(drafts.length)} /> : null}
+    </HStack>
+  )
 
   const renderAssetTable = (rows: AssetPickRow[]) => (
     <Table
@@ -613,6 +609,7 @@ export function DraftsPage() {
       <HStack gap={2} wrap="wrap">
         <Button label="保存修改" variant="primary" onClick={() => void saveEdit()} isLoading={editSaving} />
         <Button label="复制全文" variant="secondary" onClick={() => void copyText(formatDraftForCopy(editingBrief()))} />
+        {draftBoxButton}
         <Button label="取消" variant="ghost" onClick={() => setEditing(null)} />
       </HStack>
       <Selector
@@ -654,6 +651,7 @@ export function DraftsPage() {
       <HStack gap={2} wrap="wrap">
         <Button label="复制全文" variant="secondary" onClick={() => void copyText(formatDraftForCopy(currentBrief()))} />
         <Button label={saved ? '已保存' : '保存草稿'} variant="primary" onClick={() => void save()} isLoading={saving} isDisabled={saved} />
+        {draftBoxButton}
       </HStack>
       <TextInput
         label="标题"
@@ -697,51 +695,63 @@ export function DraftsPage() {
       />
     </VStack>
   ) : (
-    <EmptyState
-      title={narrow ? '先在上方选素材并生成' : '先在左侧选素材并生成'}
-      description="选好内容类型和可公开的素材，再点生成草稿。标题和正文会出现在这里，改完再保存。"
-    />
+    <VStack gap={3}>
+      <HStack gap={2} wrap="wrap" vAlign="center">
+        <Heading level={2}>草稿</Heading>
+        {draftBoxButton}
+      </HStack>
+      <EmptyState
+        title={narrow ? '先在上方选素材并生成' : '先在左侧选素材并生成'}
+        description="选好内容类型和可公开的素材，再点生成草稿。标题和正文会出现在这里，改完再保存。"
+      />
+    </VStack>
   )
 
-  const draftsTable = (
-    <VStack gap={2}>
-      <Heading level={2}>草稿箱</Heading>
-      <Text color="secondary">点「编辑」会在右侧打开这篇草稿。保存会更新原来的记录。</Text>
-      {rows.length === 0 ? <Text color="secondary">还没有保存的草稿。</Text> : null}
-      {rows.length === 0 ? null : <Table
-        data={rows}
-        idKey="id"
-        density="compact"
-        hasHover
-        verticalAlign="top"
-        columns={[
-          { key: 'when', header: '最后编辑', width: pixel(120) },
-          { key: 'channel', header: '渠道', width: pixel(140) },
-          { key: 'title', header: '标题', width: proportional(2, { minWidth: 180 }) },
-          { key: 'source', header: '来源', width: pixel(100) },
-          {
-            key: 'id',
-            header: '操作',
-            width: pixel(220),
-            renderCell: (row) => (
-              <HStack gap={1} wrap="wrap">
-                <Button
-                  label="编辑"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    const found = drafts.find((item) => item.id === row.id)
-                    if (found) openEdit(found)
-                  }}
-                />
-                <Button label="另存" size="sm" variant="ghost" onClick={() => void duplicate(row.id)} />
-                <Button label="删除" size="sm" variant="ghost" onClick={() => void remove(row.id)} />
-              </HStack>
-            ),
-          },
-        ]}
-      />}
-    </VStack>
+  const draftBox = (
+    <Dialog isOpen={boxOpen} onOpenChange={setBoxOpen} purpose="info" width={720} maxHeight="85dvh">
+      <Layout
+        header={<DialogHeader title="草稿箱" onOpenChange={setBoxOpen} />}
+        content={
+          <LayoutContent>
+            {rows.length === 0 ? (
+              <EmptyState title="还没有保存的草稿" description="生成后点保存，稿子会出现在这里。打开后可以继续改。" />
+            ) : (
+              <Table
+                data={rows}
+                idKey="id"
+                density="compact"
+                hasHover
+                verticalAlign="middle"
+                columns={[
+                  { key: 'title', header: '标题', width: proportional(2, { minWidth: 160 }) },
+                  { key: 'contentType', header: '内容类型', width: pixel(140) },
+                  { key: 'when', header: '更新', width: pixel(120) },
+                  {
+                    key: 'id',
+                    header: '操作',
+                    width: pixel(140),
+                    renderCell: (row) => (
+                      <HStack gap={1}>
+                        <Button
+                          label="打开"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            const found = drafts.find((item) => item.id === row.id)
+                            if (found) openEdit(found)
+                          }}
+                        />
+                        <Button label="删除" size="sm" variant="ghost" onClick={() => void remove(row.id)} />
+                      </HStack>
+                    ),
+                  },
+                ]}
+              />
+            )}
+          </LayoutContent>
+        }
+      />
+    </Dialog>
   )
 
   const workspace = narrow ? (
@@ -783,7 +793,7 @@ export function DraftsPage() {
           <InfoBanner title="当前使用品牌资料模板" description="没有模型密钥时，草稿按渠道套模板。到「设置」配上密钥后，模型会在同一份事实边界里改写。" />
         ) : null}
         {workspace}
-        {draftsTable}
+        {draftBox}
       </VStack>
     </PageFrame>
   )
