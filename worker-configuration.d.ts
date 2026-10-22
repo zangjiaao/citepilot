@@ -4,6 +4,7 @@
 interface __BaseEnv_Env {
 	DB: D1Database;
 	ASSETS: Fetcher;
+	MEDIA: R2Bucket;
 	DEEPSEEK_BASE_URL: "https://api.deepseek.com";
 	DEEPSEEK_MODEL: "deepseek-chat";
 }

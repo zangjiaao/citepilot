@@ -11,6 +11,7 @@ import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
 import { applyBrandMention, assembleDraftPrompt, channelForContentType, isContentType, materialDraft, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
 import { readAssetDraft } from '../shared/assets.ts'
+import { acceptPolishedHtml, POLISH_SYSTEM, polishNotesOffline } from '../shared/polishAsset.ts'
 import { assertPublicHttpUrl } from '../shared/ssrf.ts'
 import type { Cluster, ContentDraft, Cycle, CycleTrendPoint, Diagnosis, DraftPreview, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
 import {
@@ -44,6 +45,7 @@ import { acceptGeneratedPrompts, acceptOwnSentiment, acceptSuggestions, acceptSu
 import { registerModelRoutes } from './modelRoutes.ts'
 import { llmStatus, resolveLlm } from './models.ts'
 import { assetFromDraft, countAssets, deleteAsset, getAsset, insertAsset, listAssets, updateAsset } from './assets.ts'
+import { readStoredMedia, storeStudioImage } from './media.ts'
 
 export const app = new Hono<{ Bindings: AppBindings }>()
 
@@ -478,6 +480,66 @@ app.delete('/api/studios/:id/assets/:assetId', async (c) => {
   return c.json({ ok: true })
 })
 
+app.post('/api/studios/:id/assets/polish', async (c) => {
+  await mustStudio(c.env.DB, c.req.param('id'))
+  const record = asRecord(await readJson(c))
+  const notes = stringField(record, 'notes').trim()
+  if (!notes) throw new HttpError(400, '先在右侧写下笔记，再一起整理', 'body')
+  if (notes.length > 20000) throw new HttpError(400, '笔记太长', 'body')
+  const title = stringField(record, 'title').trim().slice(0, 80)
+  const metrics = Array.isArray(record.metrics)
+    ? record.metrics.filter((item): item is string => typeof item === 'string').slice(0, 12).join('\n')
+    : ''
+  const source = [title, notes, metrics].filter(Boolean).join('\n')
+  const fallback = polishNotesOffline(notes)
+  const writer = await resolveLlm(c.env.DB, c.env, 'generate')
+  if (!writer.enabled) return c.json({ body: fallback, source: 'notes' })
+  try {
+    const raw = await completeJson(
+      writer,
+      POLISH_SYSTEM,
+      `标题：${title || '未写'}\n已授权的数据：\n${metrics || '没有'}\n笔记：\n${notes}`,
+      0.2,
+    )
+    const accepted = acceptPolishedHtml(raw, source)
+    if (!accepted) return c.json({ body: fallback, source: 'notes' })
+    return c.json({ body: accepted, source: 'model' })
+  } catch (error) {
+    console.error(JSON.stringify({ message: 'asset polish failed', error: error instanceof Error ? error.message : String(error) }))
+    return c.json({ body: fallback, source: 'notes' })
+  }
+})
+
+app.post('/api/studios/:id/media', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const form = await c.req.formData()
+  const file = form.get('file')
+  if (!(file instanceof File)) throw new HttpError(400, '请选择一张图片', 'file')
+  try {
+    const image = await storeStudioImage(c.env, studio.id, file)
+    return c.json(image, 201)
+  } catch (error) {
+    if (error instanceof HttpError) throw error
+    console.error(JSON.stringify({ message: 'media store failed', error: error instanceof Error ? error.message : String(error) }))
+    throw new HttpError(502, '图片没有保存。本地会用 Wrangler 的 R2；没有绑定 MEDIA 时写到 .data/media。线上需要先创建桶 citepilot-media。')
+  }
+})
+
+app.get('/api/media/*', async (c) => {
+  const key = decodeMediaKey(c.req.path)
+  if (!key) throw new HttpError(404, '没有这张图片')
+  const media = await readStoredMedia(c.env, key)
+  if (!media) throw new HttpError(404, '没有这张图片')
+  const body = media.bytes.buffer.slice(media.bytes.byteOffset, media.bytes.byteOffset + media.bytes.byteLength) as ArrayBuffer
+  return new Response(body, {
+    headers: {
+      'content-type': media.contentType,
+      'cache-control': 'public, max-age=86400',
+      'x-content-type-options': 'nosniff',
+    },
+  })
+})
+
 app.get('/api/studios/:id/drafts', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
   return c.json({ drafts: await listDrafts(c.env.DB, studio.id) })
@@ -689,6 +751,21 @@ app.all('*', async (c) => {
   if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw)
   return c.text('CitePilot API')
 })
+
+function decodeMediaKey(path: string): string | null {
+  const prefix = '/api/media/'
+  if (!path.startsWith(prefix)) return null
+  try {
+    const key = path
+      .slice(prefix.length)
+      .split('/')
+      .map((part) => decodeURIComponent(part))
+      .join('/')
+    return key || null
+  } catch {
+    return null
+  }
+}
 
 async function pickCycle(db: D1Database, studioId: string, requested: string | undefined, fallback: Cycle | null): Promise<Cycle | null> {
   if (requested) return mustCycle(db, studioId, requested)

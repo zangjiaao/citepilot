@@ -1,3 +1,5 @@
+import { isMediaKey } from './media.ts'
+import { imageRefsFromHtml, plainTextFromRich, sanitizeRichHtml } from './richText.ts'
 import { assertPublicHttpUrl } from './ssrf.ts'
 import type { DraftBrief, Studio } from './types.ts'
 
@@ -34,6 +36,12 @@ export interface CaseMetric {
   customerAuthorized: boolean
 }
 
+export interface AssetImage {
+  id: string
+  key: string
+  alt: string
+}
+
 export interface AssetDetails {
   industry: string
   problem: string
@@ -42,6 +50,7 @@ export interface AssetDetails {
   metrics: CaseMetric[]
   quote: string
   quoteAuthorized: boolean
+  images: AssetImage[]
 }
 
 export interface Asset {
@@ -78,7 +87,7 @@ export function publicityLabel(value: Publicity): string {
 }
 
 export function emptyDetails(): AssetDetails {
-  return { industry: '', problem: '', approach: '', howItWorks: '', metrics: [], quote: '', quoteAuthorized: false }
+  return { industry: '', problem: '', approach: '', howItWorks: '', metrics: [], quote: '', quoteAuthorized: false, images: [] }
 }
 
 export function authorizedMetrics(details: AssetDetails): CaseMetric[] {
@@ -96,8 +105,9 @@ export function assetAngles(asset: Asset): string[] {
   const metric = authorizedMetrics(asset.details)[0]
   if (metric) angles.push(`用客户授权的变化作钩子：${formatMetric(metric)}`)
   if (asset.details.problem.trim()) angles.push(`从客户的问题开头：${clip(asset.details.problem)}`)
-  if (asset.type === 'interaction' || asset.type === 'idea') angles.push(`只拆这一处：${clip(asset.body || asset.details.howItWorks || asset.title)}`)
-  if (asset.type === 'lesson' || asset.body.includes('踩')) angles.push(`写成一次踩坑，不要写成成绩单：${clip(asset.body || asset.title)}`)
+  const story = plainTextFromRich(asset.body)
+  if (asset.type === 'interaction' || asset.type === 'idea') angles.push(`只拆这一处：${clip(story || asset.details.howItWorks || asset.title)}`)
+  if (asset.type === 'lesson' || story.includes('踩')) angles.push(`写成一次踩坑，不要写成成绩单：${clip(story || asset.title)}`)
   if (asset.details.howItWorks.trim()) angles.push(`讲它怎么运作：${clip(asset.details.howItWorks)}`)
   if (asset.details.quoteAuthorized && asset.details.quote.trim()) angles.push(`用客户原话收束：${clip(asset.details.quote)}`)
   if (asset.type === 'product') angles.push(`写成这个产品解决的一件具体事：${clip(asset.title)}`)
@@ -112,8 +122,9 @@ export function readAssetDraft(input: unknown): { ok: true; value: AssetDraft } 
   if (!isAssetType(type)) return { ok: false, field: 'type', error: '请选择素材类型' }
   const title = text(record.title, 80)
   if (title === null || !title) return { ok: false, field: 'title', error: '标题需要 1 到 80 个字' }
-  const body = text(record.body, LONG)
-  if (body === null) return { ok: false, field: 'body', error: `正文有 ${typeof record.body === 'string' ? record.body.trim().length : 0} 字，上限是 ${LONG} 字` }
+  const bodyRaw = text(record.body, LONG)
+  if (bodyRaw === null) return { ok: false, field: 'body', error: `正文有 ${typeof record.body === 'string' ? record.body.trim().length : 0} 字，上限是 ${LONG} 字` }
+  const body = sanitizeRichHtml(bodyRaw ?? '')
   const publicity = record.publicity
   if (publicity !== 'public' && publicity !== 'anonymous' && publicity !== 'private') {
     return { ok: false, field: 'publicity', error: '公开程度请选公开、匿名或不可公开' }
@@ -124,7 +135,8 @@ export function readAssetDraft(input: unknown): { ok: true; value: AssetDraft } 
   if (!links.ok) return links
   const details = readDetails(record.details)
   if (!details.ok) return details
-  return { ok: true, value: { type, title, body: body ?? '', details: details.value, tags: tags.items, links: links.items, publicity } }
+  const images = mergeImages(details.value.images, imageRefsFromHtml(body))
+  return { ok: true, value: { type, title, body, details: { ...details.value, images }, tags: tags.items, links: links.items, publicity } }
 }
 
 export function assetBlock(asset: Asset): string {
@@ -137,7 +149,10 @@ export function assetBlock(asset: Asset): string {
     `公开：${publicityLabel(asset.publicity)}。${visibility}`,
     `标题：${asset.title}`,
     `标签：${asset.tags.join('、') || '无'}`,
-    `正文：${asset.body || '未写'}`,
+    `正文：${plainTextFromRich(asset.body) || '未写'}`,
+    asset.details.images.length > 0
+      ? `配图：${asset.details.images.map((item) => item.alt.trim() || '无说明').join('、')}。不要根据图片编造画面里没有写出的事实。`
+      : '',
     `行业：${asset.details.industry || '未写'}`,
     `客户问题：${asset.details.problem || '未写'}`,
     `做法：${asset.details.approach || '未写'}`,
@@ -159,14 +174,15 @@ export function assetBlock(asset: Asset): string {
 export function draftFromAssets(studio: Studio, assets: Asset[], channelPath: string, mention: BrandMention): DraftBrief {
   const metric = assets.flatMap((item) => authorizedMetrics(item.details))[0]
   const problem = assets.map((item) => item.details.problem.trim()).find(Boolean)
+  const firstBody = assets[0] ? plainTextFromRich(assets[0].body) : ''
   const opener = metric
     ? `客户的${metric.name}从 ${metric.before}${metric.unit} 变成 ${metric.after}${metric.unit}。${problem ?? ''}`.trim()
-    : problem || assets[0]?.body.trim() || `【待补充：从素材库补上客户当时的具体问题】`
+    : problem || firstBody || `【待补充：从素材库补上客户当时的具体问题】`
   const sections = [
     opener,
     '',
     ...assets.flatMap((item) => {
-      const lines = [`${assetTypeLabel(item.type)}：${item.title}`, item.body.trim()]
+      const lines = [`${assetTypeLabel(item.type)}：${item.title}`, plainTextFromRich(item.body)]
       if (item.details.approach.trim()) lines.push(item.details.approach.trim())
       if (item.details.howItWorks.trim()) lines.push(item.details.howItWorks.trim())
       for (const entry of authorizedMetrics(item.details)) lines.push(formatMetric(entry))
@@ -200,7 +216,7 @@ export function allowedNumbers(assets: Asset[]): Set<string> {
   }
   for (const asset of assets) {
     collect(asset.title)
-    collect(asset.body)
+    collect(plainTextFromRich(asset.body))
     collect(asset.details.industry)
     collect(asset.details.problem)
     collect(asset.details.approach)
@@ -232,6 +248,8 @@ function readDetails(value: unknown): { ok: true; value: AssetDetails } | { ok: 
   if (quote === null) return { ok: false, field: 'quote', error: '客户原话过长' }
   const metrics = readMetrics(record.metrics)
   if (!metrics.ok) return metrics
+  const images = readImages(record.images)
+  if (!images.ok) return images
   return {
     ok: true,
     value: {
@@ -242,8 +260,17 @@ function readDetails(value: unknown): { ok: true; value: AssetDetails } | { ok: 
       metrics: metrics.items,
       quote: quote ?? '',
       quoteAuthorized: record.quoteAuthorized === true,
+      images: images.items,
     },
   }
+}
+
+export function detailsFromStored(value: unknown): AssetDetails {
+  const record = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+  const parsed = readDetails({ ...record, images: [] })
+  const base = parsed.ok ? parsed.value : emptyDetails()
+  const images = readImages(record.images)
+  return { ...base, images: images.ok ? images.items : [] }
 }
 
 function readMetrics(value: unknown): { ok: true; items: CaseMetric[] } | { ok: false; field: string; error: string } {
@@ -275,6 +302,35 @@ function readMetrics(value: unknown): { ok: true; items: CaseMetric[] } | { ok: 
     })
   }
   return { ok: true, items }
+}
+
+function readImages(value: unknown): { ok: true; items: AssetImage[] } | { ok: false; field: string; error: string } {
+  if (value === undefined || value === null) return { ok: true, items: [] }
+  if (!Array.isArray(value)) return { ok: false, field: 'images', error: '图片格式不正确' }
+  if (value.length > 20) return { ok: false, field: 'images', error: '一条素材最多 20 张图片' }
+  const items: AssetImage[] = []
+  const seen = new Set<string>()
+  for (const [index, entry] of value.entries()) {
+    if (!entry || typeof entry !== 'object') return { ok: false, field: 'images', error: `第 ${index + 1} 张图片格式不正确` }
+    const record = entry as Record<string, unknown>
+    const key = typeof record.key === 'string' ? record.key.trim() : ''
+    if (!key) continue
+    if (!isMediaKey(key)) return { ok: false, field: 'images', error: `第 ${index + 1} 张图片的地址不正确` }
+    if (seen.has(key)) continue
+    seen.add(key)
+    const alt = text(record.alt, 120)
+    if (alt === null) return { ok: false, field: 'images', error: `第 ${index + 1} 张图片的说明过长` }
+    items.push({ id: idOf(record.id, `img-${index + 1}`), key, alt: alt ?? '' })
+  }
+  return { ok: true, items }
+}
+
+function mergeImages(existing: AssetImage[], refs: { key: string; alt: string }[]): AssetImage[] {
+  return refs.map((ref) => {
+    const prev = existing.find((item) => item.key === ref.key)
+    const file = ref.key.split('/')[1]?.replace(/\./g, '-') || 'img'
+    return { id: prev?.id || file, key: ref.key, alt: ref.alt || prev?.alt || '' }
+  })
 }
 
 function readTags(value: unknown): { ok: true; items: string[] } | { ok: false; field: string; error: string } {

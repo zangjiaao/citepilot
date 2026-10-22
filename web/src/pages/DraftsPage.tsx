@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Badge } from '@astryxdesign/core/Badge'
 import { Button } from '@astryxdesign/core/Button'
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
@@ -16,9 +16,10 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { Token } from '@astryxdesign/core/Token'
 import * as stylex from '@stylexjs/stylex'
-import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeForChannel, contentTypeLabel, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
+import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeForAsset, contentTypeForChannel, contentTypeLabel, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
 import { recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
 import { assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
+import { plainTextFromRich } from '../../../shared/richText.ts'
 import { channelLabel, DRAFT_CHANNELS, formatDraftForCopy } from '../../../shared/drafts.ts'
 import { SOURCE_LABEL } from '../../../shared/platforms.ts'
 import type { ContentDraft, Diagnosis, DraftChannel, DraftPreview, Prompt } from '../../../shared/types.ts'
@@ -121,6 +122,10 @@ export function DraftsPage() {
   const [editUrl, setEditUrl] = useState('')
   const [editSaving, setEditSaving] = useState(false)
   const [boxOpen, setBoxOpen] = useState(false)
+  const [libraryPin, setLibraryPin] = useState('')
+  const [searchParams] = useSearchParams()
+  const presetAsset = searchParams.get('asset')
+  const handledPreset = useRef('')
 
   const load = async (id: string) => {
     const [promptPayload, diagnosisPayload, draftPayload, assetPayload, observationPayload] = await Promise.all([
@@ -148,6 +153,8 @@ export function DraftsPage() {
     setAssets([])
     setAssetIds([])
     setAutoLinked(false)
+    setLibraryPin('')
+    handledPreset.current = ''
     load(studioId).catch((err: unknown) => setError(err instanceof Error ? err.message : '草稿加载失败'))
   }, [studioId])
 
@@ -165,12 +172,37 @@ export function DraftsPage() {
   const recommendedPrompt = prompts.find((item) => item.id === recommendation.promptId) ?? null
 
   useEffect(() => {
+    if (!presetAsset || !studio || assets.length === 0) return
+    const token = `${studio.id}:${presetAsset}`
+    if (handledPreset.current === token) return
+    handledPreset.current = token
+    const asset = assets.find((item) => item.id === presetAsset)
+    navigate('/drafts', { replace: true })
+    if (!asset) {
+      setNotice('没有找到这条素材。')
+      return
+    }
+    if (asset.publicity === 'private') {
+      setNotice('这条素材不可公开，起草时不能勾选。')
+      return
+    }
+    const hinted = contentTypeForAsset(asset.type)
+    setContentType(hinted)
+    setChannel(channelForContentType(hinted))
+    setLibraryPin(asset.id)
+    appliedRecommendation.current = ''
+  }, [presetAsset, studio, assets, navigate])
+
+  useEffect(() => {
     if (!studio || assets.length === 0) return
-    const key = `${studio.id}:${contentType}:${assets.map((item) => item.id).join(',')}`
+    const key = `${studio.id}:${contentType}:${assets.map((item) => item.id).join(',')}:${libraryPin}`
     if (appliedRecommendation.current === key) return
     appliedRecommendation.current = key
     const next = recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
-    setAssetIds(next.assetIds)
+    const cap = contentType === 'short-post' || contentType === 'thread' ? 2 : 3
+    const pinned = libraryPin ? assets.find((item) => item.id === libraryPin && item.publicity !== 'private') : undefined
+    const ids = pinned ? [pinned.id, ...next.assetIds.filter((id) => id !== pinned.id)].slice(0, cap) : next.assetIds
+    setAssetIds(ids)
     if (brandMention === 'none') {
       setPromptId('')
       setAutoLinked(false)
@@ -178,10 +210,11 @@ export function DraftsPage() {
     }
     setPromptId(next.promptId ?? '')
     setAutoLinked(Boolean(next.promptId))
-  }, [studio, contentType, assets, prompts, mentions])
+  }, [studio, contentType, assets, prompts, mentions, libraryPin])
 
   const rerank = () => {
     if (!studio) return
+    setLibraryPin('')
     const next = recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
     setAssetIds(next.assetIds)
     if (brandMention === 'none') {
@@ -196,7 +229,7 @@ export function DraftsPage() {
   const query = assetQuery.trim()
   const visibleAssets = assets.filter((item) => {
     if (!query) return true
-    const haystack = `${item.title} ${item.body} ${item.tags.join(' ')} ${assetTypeLabel(item.type)}`
+    const haystack = `${item.title} ${plainTextFromRich(item.body)} ${item.tags.join(' ')} ${assetTypeLabel(item.type)}`
     return haystack.includes(query)
   })
   const selectedAssets = assets.filter((item) => assetIds.includes(item.id))
@@ -451,6 +484,7 @@ export function DraftsPage() {
         onChange={(value) => {
           const next = CONTENT_TYPES.find((item) => item.id === value)
           if (!next) return
+          setLibraryPin('')
           setContentType(next.id)
           setChannel(channelForContentType(next.id))
         }}
@@ -784,9 +818,19 @@ export function DraftsPage() {
   return (
     <PageFrame
       title="内容起草"
-      description="整站诊断之后，在这里起草可引用的稿子。你审完后自己发布，这里不连接公众号、小红书或任何其他平台。"
+      description="故事优先，不硬广，不凑字。按渠道起草，发布在站外完成，再回来看监测里有没有被引用。"
     >
       <VStack gap={4}>
+        <HStack gap={1} vAlign="center" wrap="wrap">
+          <Button label="素材" size="sm" variant="ghost" onClick={() => navigate('/library')} />
+          <Text color="secondary">→</Text>
+          <Text>起草</Text>
+          <Text color="secondary">→</Text>
+          <Text color="secondary">发布</Text>
+          <Text color="secondary">→</Text>
+          <Button label="监测" size="sm" variant="ghost" onClick={() => navigate('/monitor')} />
+        </HStack>
+        <Text color="secondary">素材 → 起草 → 发布 → 监测。先写成故事，再按渠道改一改。发布不在这里完成。</Text>
         <ErrorBanner message={error} />
         {notice ? <InfoBanner title={notice} /> : null}
         {llm && !llm.enabled ? (

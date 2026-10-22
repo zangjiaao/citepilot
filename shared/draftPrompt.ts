@@ -61,6 +61,14 @@ export function contentTypeLabel(id: string): string {
   return CONTENT_TYPES.find((item) => item.id === id)?.label ?? id
 }
 
+export function contentTypeForAsset(type: string): ContentType {
+  if (type === 'interaction' || type === 'idea' || type === 'product') return 'interaction'
+  if (type === 'lesson') return 'retro'
+  if (type === 'testimonial') return 'wechat'
+  if (type === 'reference') return 'faq'
+  return 'case-breakdown'
+}
+
 export function channelForContentType(type: ContentType): DraftChannel {
   switch (type) {
     case 'faq':
@@ -161,7 +169,7 @@ export function assembleDraftPrompt(
         ? 'citeSentences 是 2 到 4 句故事里已经出现的事实，可以不带品牌名。不要把题目原句当成引用句。urlHint 必须包含给定官网主机名。'
         : 'citeSentences 是 2 到 4 句可引用的话。品牌名可以出现，但不要每句都是广告。urlHint 必须包含给定官网主机名。'
   const system = [
-    '你在把几条素材合成一篇可以分享的内容。先选一个钩子，再按渠道安排结构，不要逐条复述素材库。',
+    '你在把几条素材合成一篇可以分享的内容。先选一个钩子，再按渠道安排结构，不要逐条复述素材库。故事优先，不硬广，不凑字，不写成水文。',
     SHOW_DONT_TELL_RULE,
     NO_FABRICATION_RULE,
     mentionRule,

@@ -1,4 +1,5 @@
 import type { Asset, AssetType } from './assets.ts'
+import { plainTextFromRich } from './richText.ts'
 import type { ContentType } from './draftPrompt.ts'
 import type { Cluster, Prompt, Studio } from './types.ts'
 
@@ -77,7 +78,7 @@ function scoreAsset(asset: Asset, contentType: ContentType, studio: StudioLike):
   if (asset.details.quoteAuthorized && asset.details.quote.trim()) score += contentType === 'case-breakdown' || contentType === 'wechat' ? 2 : 1
   if (asset.type === 'testimonial' && asset.details.quote.trim() && !asset.details.quoteAuthorized) score -= 2
   score += Math.min(3, overlapCount(assetText(asset), studioTerms(studio)))
-  const length = asset.body.trim().length
+  const length = plainTextFromRich(asset.body).length
   if (SHORT_TYPES.has(contentType)) score += length > 0 && length <= 160 ? 3 : length > 500 ? -3 : 0
   if (RICH_TYPES.has(contentType) && assetText(asset).length > 180) score += 2
   return score
@@ -121,7 +122,7 @@ function studioTerms(studio: StudioLike): string[] {
 }
 
 function assetText(asset: Asset): string {
-  return [asset.title, asset.body, asset.details.problem, asset.details.approach, asset.details.howItWorks].join('')
+  return [asset.title, plainTextFromRich(asset.body), asset.details.problem, asset.details.approach, asset.details.howItWorks].join('')
 }
 
 function overlapCount(text: string, terms: string[]): number {

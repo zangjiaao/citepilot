@@ -1,4 +1,4 @@
-import { emptyDetails, type Asset, type AssetDraft, type AssetType, type CaseMetric } from '../shared/assets.ts'
+import { detailsFromStored, emptyDetails, type Asset, type AssetDraft, type AssetType } from '../shared/assets.ts'
 import { HttpError } from './errors.ts'
 
 interface AssetRow {
@@ -103,41 +103,10 @@ function mapAsset(row: AssetRow): Asset {
 
 function parseDetails(value: string): Asset['details'] {
   try {
-    const parsed = JSON.parse(value) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return emptyDetails()
-    const record = parsed as Record<string, unknown>
-    return {
-      industry: asText(record.industry),
-      problem: asText(record.problem),
-      approach: asText(record.approach),
-      howItWorks: asText(record.howItWorks),
-      metrics: parseMetrics(record.metrics),
-      quote: asText(record.quote),
-      quoteAuthorized: record.quoteAuthorized === true,
-    }
+    return detailsFromStored(JSON.parse(value) as unknown)
   } catch {
     return emptyDetails()
   }
-}
-
-function parseMetrics(value: unknown): CaseMetric[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object') return []
-    const record = item as Record<string, unknown>
-    if (typeof record.name !== 'string') return []
-    return [
-      {
-        id: typeof record.id === 'string' ? record.id : 'metric',
-        name: record.name,
-        before: asText(record.before),
-        after: asText(record.after),
-        unit: asText(record.unit),
-        source: asText(record.source),
-        customerAuthorized: record.customerAuthorized === true,
-      },
-    ]
-  })
 }
 
 function parseLinks(value: string): Asset['links'] {

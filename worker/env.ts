@@ -3,6 +3,7 @@ import { completionsUrl } from '../shared/json.ts'
 export type AppBindings = Env & {
   DEEPSEEK_API_KEY?: string
   OPENAI_API_KEY?: string
+  MEDIA?: R2Bucket
 }
 
 export interface LlmConfig {
