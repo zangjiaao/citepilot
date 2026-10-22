@@ -49,7 +49,7 @@ function Shell() {
       label={item.label}
       href={item.to}
       icon={<Icon icon={item.icon} />}
-      isSelected={location.pathname === item.to}
+      isSelected={item.to === '/' ? location.pathname === '/' : location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)}
       onClick={(event) => {
         event.preventDefault()
         navigate(item.to)

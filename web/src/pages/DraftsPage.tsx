@@ -1,22 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Badge } from '@astryxdesign/core/Badge'
 import { Button } from '@astryxdesign/core/Button'
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import { Collapsible } from '@astryxdesign/core/Collapsible'
-import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
 import { HStack, Layout, LayoutContent, LayoutFooter, LayoutPanel, VStack } from '@astryxdesign/core/Layout'
 import { Section } from '@astryxdesign/core/Section'
 import { Selector } from '@astryxdesign/core/Selector'
+import { StackItem } from '@astryxdesign/core/Stack'
 import { Table, pixel, proportional } from '@astryxdesign/core/Table'
 import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { Token } from '@astryxdesign/core/Token'
 import * as stylex from '@stylexjs/stylex'
-import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeForAsset, contentTypeForChannel, contentTypeLabel, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
+import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeForAsset, contentTypeLabel, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
 import { recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
 import { assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
 import { plainTextFromRich } from '../../../shared/richText.ts'
@@ -29,22 +29,34 @@ import { useStudio } from '../studio'
 import { ErrorBanner, InfoBanner, PageFrame, WarningBanner } from '../ui'
 
 const styles = stylex.create({
+  page: {
+    height: '100%',
+    minHeight: 0,
+  },
+  grow: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    minHeight: 0,
+    display: 'flex',
+    flexDirection: 'column',
+  },
   workspace: {
-    height: 'min(780px, 74vh)',
-    minHeight: 560,
+    flexGrow: 1,
+    minHeight: 0,
+    height: '100%',
+  },
+  fill: {
+    height: '100%',
+    minHeight: 0,
+    display: 'flex',
+    flexDirection: 'column',
   },
   assetList: {
     maxHeight: 320,
     overflow: 'auto',
   },
 })
-
-interface DraftRow extends Record<string, unknown> {
-  id: string
-  when: string
-  contentType: string
-  title: string
-}
 
 interface AssetPickRow extends Record<string, unknown> {
   id: string
@@ -121,8 +133,9 @@ export function DraftsPage() {
   const [editCites, setEditCites] = useState('')
   const [editUrl, setEditUrl] = useState('')
   const [editSaving, setEditSaving] = useState(false)
-  const [boxOpen, setBoxOpen] = useState(false)
   const [libraryPin, setLibraryPin] = useState('')
+  const { draftId } = useParams()
+  const openedDraft = useRef('')
   const [searchParams] = useSearchParams()
   const presetAsset = searchParams.get('asset')
   const handledPreset = useRef('')
@@ -155,8 +168,26 @@ export function DraftsPage() {
     setAutoLinked(false)
     setLibraryPin('')
     handledPreset.current = ''
+    openedDraft.current = ''
     load(studioId).catch((err: unknown) => setError(err instanceof Error ? err.message : '草稿加载失败'))
   }, [studioId])
+
+  useEffect(() => {
+    if (!draftId || drafts.length === 0 || openedDraft.current === draftId) return
+    const found = drafts.find((item) => item.id === draftId)
+    if (!found) {
+      setError('没有找到这篇草稿')
+      return
+    }
+    openedDraft.current = draftId
+    setEditing(found)
+    setEditChannel(found.channel)
+    setEditTitle(found.title)
+    setEditBody(found.body)
+    setEditCites(found.citeSentences.join('\n'))
+    setEditUrl(found.urlHint)
+    setPreview(null)
+  }, [draftId, drafts])
 
   useEffect(() => {
     if (!editing || !narrow) return
@@ -177,7 +208,7 @@ export function DraftsPage() {
     if (handledPreset.current === token) return
     handledPreset.current = token
     const asset = assets.find((item) => item.id === presetAsset)
-    navigate('/drafts', { replace: true })
+    navigate('/drafts/new', { replace: true })
     if (!asset) {
       setNotice('没有找到这条素材。')
       return
@@ -328,7 +359,7 @@ export function DraftsPage() {
     setError('')
     try {
       const brief = currentBrief()
-      await api(`/api/studios/${studioId}/drafts`, {
+      const result = await api<{ draft: ContentDraft }>(`/api/studios/${studioId}/drafts`, {
         method: 'POST',
         body: JSON.stringify({
           ...brief,
@@ -341,37 +372,15 @@ export function DraftsPage() {
         }),
       })
       setSaved(true)
-      setNotice('已存入草稿箱。发布仍由你自己完成。')
+      setNotice('已保存。发布仍由你自己完成。')
+      openedDraft.current = result.draft.id
+      navigate(`/drafts/${result.draft.id}`)
       await load(studioId)
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败')
     } finally {
       setSaving(false)
     }
-  }
-
-  const remove = async (id: string) => {
-    if (!studioId || !window.confirm('删除这篇草稿？已保存的修改会一起删掉。')) return
-    try {
-      await api(`/api/studios/${studioId}/drafts/${id}`, { method: 'DELETE' })
-      if (editing?.id === id) setEditing(null)
-      setNotice('已删除这篇草稿。')
-      await load(studioId)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除失败')
-    }
-  }
-
-  const openEdit = (item: ContentDraft) => {
-    setEditing(item)
-    setEditChannel(item.channel)
-    setEditTitle(item.title)
-    setEditBody(item.body)
-    setEditCites(item.citeSentences.join('\n'))
-    setEditUrl(item.urlHint)
-    setError('')
-    setNotice('')
-    setBoxOpen(false)
   }
 
   const saveEdit = async () => {
@@ -404,23 +413,9 @@ export function DraftsPage() {
     }
   }
 
-  const rows: DraftRow[] = drafts.map((item) => ({
-    id: item.id,
-    when: formatTime(item.updatedAt || item.createdAt),
-    contentType: contentTypeLabel(contentTypeForChannel(item.channel)),
-    title: item.title,
-  }))
-
-  const draftBoxButton = (
-    <HStack gap={1} vAlign="center">
-      <Button label="草稿箱" size="sm" variant="secondary" onClick={() => setBoxOpen(true)} />
-      {drafts.length > 0 ? <Badge variant="neutral" label={String(drafts.length)} /> : null}
-    </HStack>
-  )
-
-  const renderAssetTable = (rows: AssetPickRow[]) => (
+  const renderAssetTable = (list: AssetPickRow[]) => (
     <Table
-      data={rows}
+      data={list}
       idKey="id"
       density="compact"
       hasHover
@@ -629,8 +624,16 @@ export function DraftsPage() {
     </VStack>
   )
 
+  const bodyArea = (props: { value: string; onChange: (value: string) => void }) => (
+    <StackItem size="fill" xstyle={styles.fill}>
+      <div className="citepilot-draft-body">
+        <TextArea label="正文" value={props.value} onChange={props.onChange} rows={8} width="100%" />
+      </div>
+    </StackItem>
+  )
+
   const editor = editing ? (
-    <VStack gap={3}>
+    <VStack gap={3} height="100%" minHeight={0}>
       <HStack gap={2} wrap="wrap" vAlign="center">
         <Badge variant="info" label="已保存草稿" />
         <Heading level={2}>编辑草稿</Heading>
@@ -643,8 +646,7 @@ export function DraftsPage() {
       <HStack gap={2} wrap="wrap">
         <Button label="保存修改" variant="primary" onClick={() => void saveEdit()} isLoading={editSaving} />
         <Button label="复制全文" variant="secondary" onClick={() => void copyText(formatDraftForCopy(editingBrief()))} />
-        {draftBoxButton}
-        <Button label="取消" variant="ghost" onClick={() => setEditing(null)} />
+        <Button label="返回列表" variant="ghost" onClick={() => navigate('/drafts')} />
       </HStack>
       <Selector
         label="渠道"
@@ -656,12 +658,12 @@ export function DraftsPage() {
         }}
       />
       <TextInput label="标题" value={editTitle} onChange={setEditTitle} width="100%" />
-      <TextArea label="正文" value={editBody} onChange={setEditBody} rows={16} width="100%" />
-      <TextArea label="建议被引用的句子" description="一行一句。" value={editCites} onChange={setEditCites} rows={5} width="100%" />
+      {bodyArea({ value: editBody, onChange: setEditBody })}
+      <TextArea label="建议被引用的句子" description="一行一句。" value={editCites} onChange={setEditCites} rows={4} width="100%" />
       <TextInput label="建议落地网址" value={editUrl} onChange={setEditUrl} width="100%" />
     </VStack>
   ) : preview ? (
-    <VStack gap={3}>
+    <VStack gap={3} height="100%" minHeight={0}>
       <HStack gap={2} wrap="wrap" vAlign="center">
         <Badge variant="neutral" label="生成预览" />
         <Heading level={2}>草稿</Heading>
@@ -685,7 +687,6 @@ export function DraftsPage() {
       <HStack gap={2} wrap="wrap">
         <Button label="复制全文" variant="secondary" onClick={() => void copyText(formatDraftForCopy(currentBrief()))} />
         <Button label={saved ? '已保存' : '保存草稿'} variant="primary" onClick={() => void save()} isLoading={saving} isDisabled={saved} />
-        {draftBoxButton}
       </HStack>
       <TextInput
         label="标题"
@@ -696,16 +697,13 @@ export function DraftsPage() {
         }}
         width="100%"
       />
-      <TextArea
-        label="正文"
-        value={body}
-        onChange={(value) => {
+      {bodyArea({
+        value: body,
+        onChange: (value) => {
           setBody(value)
           setSaved(false)
-        }}
-        rows={16}
-        width="100%"
-      />
+        },
+      })}
       <TextArea
         label="建议被引用的句子"
         description="一行一句。回答引擎适合整句引用，所以每句都带上品牌名称。"
@@ -714,7 +712,7 @@ export function DraftsPage() {
           setCites(value)
           setSaved(false)
         }}
-        rows={5}
+        rows={4}
         width="100%"
       />
       <TextInput
@@ -729,63 +727,13 @@ export function DraftsPage() {
       />
     </VStack>
   ) : (
-    <VStack gap={3}>
-      <HStack gap={2} wrap="wrap" vAlign="center">
-        <Heading level={2}>草稿</Heading>
-        {draftBoxButton}
-      </HStack>
+    <VStack gap={3} height="100%" minHeight={0}>
+      <Heading level={2}>草稿</Heading>
       <EmptyState
         title={narrow ? '先在上方选素材并生成' : '先在左侧选素材并生成'}
         description="选好内容类型和可公开的素材，再点生成草稿。标题和正文会出现在这里，改完再保存。"
       />
     </VStack>
-  )
-
-  const draftBox = (
-    <Dialog isOpen={boxOpen} onOpenChange={setBoxOpen} purpose="info" width={720} maxHeight="85dvh">
-      <Layout
-        header={<DialogHeader title="草稿箱" onOpenChange={setBoxOpen} />}
-        content={
-          <LayoutContent>
-            {rows.length === 0 ? (
-              <EmptyState title="还没有保存的草稿" description="生成后点保存，稿子会出现在这里。打开后可以继续改。" />
-            ) : (
-              <Table
-                data={rows}
-                idKey="id"
-                density="compact"
-                hasHover
-                verticalAlign="middle"
-                columns={[
-                  { key: 'title', header: '标题', width: proportional(2, { minWidth: 160 }) },
-                  { key: 'contentType', header: '内容类型', width: pixel(140) },
-                  { key: 'when', header: '更新', width: pixel(120) },
-                  {
-                    key: 'id',
-                    header: '操作',
-                    width: pixel(140),
-                    renderCell: (row) => (
-                      <HStack gap={1}>
-                        <Button
-                          label="打开"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            const found = drafts.find((item) => item.id === row.id)
-                            if (found) openEdit(found)
-                          }}
-                        />
-                        <Button label="删除" size="sm" variant="ghost" onClick={() => void remove(row.id)} />
-                      </HStack>
-                    ),
-                  },
-                ]}
-              />
-            )}
-          </LayoutContent>
-        }
-      />
-    </Dialog>
   )
 
   const workspace = narrow ? (
@@ -808,8 +756,10 @@ export function DraftsPage() {
         </LayoutPanel>
       }
       content={
-        <LayoutContent>
-          <Section id="draft-editor">{editor}</Section>
+        <LayoutContent padding={0} isScrollable={false}>
+          <Section id="draft-editor" height="100%">
+            {editor}
+          </Section>
         </LayoutContent>
       }
     />
@@ -817,28 +767,23 @@ export function DraftsPage() {
 
   return (
     <PageFrame
-      title="内容起草"
-      description="故事优先，不硬广，不凑字。按渠道起草，发布在站外完成，再回来看监测里有没有被引用。"
+      title={draftId ? '编辑草稿' : '新建草稿'}
+      description="故事优先，不硬广，不凑字。按渠道起草，发布在站外完成。"
     >
-      <VStack gap={4}>
-        <HStack gap={1} vAlign="center" wrap="wrap">
-          <Button label="素材" size="sm" variant="ghost" onClick={() => navigate('/library')} />
-          <Text color="secondary">→</Text>
-          <Text>起草</Text>
-          <Text color="secondary">→</Text>
-          <Text color="secondary">发布</Text>
-          <Text color="secondary">→</Text>
-          <Button label="监测" size="sm" variant="ghost" onClick={() => navigate('/monitor')} />
+      <VStack gap={3} height="100%" xstyle={styles.page}>
+        <HStack gap={2} vAlign="center">
+          <Button label="← 内容起草" size="sm" variant="ghost" onClick={() => navigate('/drafts')} />
         </HStack>
-        <Text color="secondary">素材 → 起草 → 发布 → 监测。先写成故事，再按渠道改一改。发布不在这里完成。</Text>
         <ErrorBanner message={error} />
         {notice ? <InfoBanner title={notice} /> : null}
         {llm && !llm.enabled ? (
           <InfoBanner title="当前使用品牌资料模板" description="没有模型密钥时，草稿按渠道套模板。到「设置」配上密钥后，模型会在同一份事实边界里改写。" />
         ) : null}
-        {workspace}
-        {draftBox}
+        <StackItem size="fill" xstyle={styles.grow}>
+          {workspace}
+        </StackItem>
       </VStack>
+      <style>{`.citepilot-draft-body{height:100%;min-height:0;display:flex;flex-direction:column}.citepilot-draft-body>div{flex:1 1 auto;min-height:0;height:100%}.citepilot-draft-body>div>div:last-child{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}.citepilot-draft-body>div>div:last-child>div{flex:1 1 auto;min-height:120px;display:flex;flex-direction:column}.citepilot-draft-body textarea{flex:1 1 auto;min-height:0;height:auto;resize:none}`}</style>
     </PageFrame>
   )
 }

@@ -1,5 +1,5 @@
 import { isMediaKey } from './media.ts'
-import { imageRefsFromHtml, plainTextFromRich, sanitizeRichHtml } from './richText.ts'
+import { imageRefsFromHtml, normalizeMarkdownBody, plainTextFromRich } from './richText.ts'
 import { assertPublicHttpUrl } from './ssrf.ts'
 import type { DraftBrief, Studio } from './types.ts'
 
@@ -124,7 +124,7 @@ export function readAssetDraft(input: unknown): { ok: true; value: AssetDraft } 
   if (title === null || !title) return { ok: false, field: 'title', error: '标题需要 1 到 80 个字' }
   const bodyRaw = text(record.body, LONG)
   if (bodyRaw === null) return { ok: false, field: 'body', error: `正文有 ${typeof record.body === 'string' ? record.body.trim().length : 0} 字，上限是 ${LONG} 字` }
-  const body = sanitizeRichHtml(bodyRaw ?? '')
+  const body = normalizeMarkdownBody(bodyRaw ?? '')
   const publicity = record.publicity
   if (publicity !== 'public' && publicity !== 'anonymous' && publicity !== 'private') {
     return { ok: false, field: 'publicity', error: '公开程度请选公开、匿名或不可公开' }

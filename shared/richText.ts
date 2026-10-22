@@ -1,110 +1,76 @@
 import { isMediaKey, keyFromMediaUrl } from './media.ts'
 
-const ALLOWED = new Set(['p', 'h2', 'h3', 'strong', 'em', 'b', 'i', 'ul', 'ol', 'li', 'a', 'img', 'br', 'div'])
-const VOID = new Set(['br', 'img'])
-
 export interface RichImageRef {
   key: string
   alt: string
 }
 
-export function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
-export function sanitizeRichHtml(input: string): string {
-  const source = input
-    .replace(/\0/g, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<(script|style|iframe|object|embed|svg|math|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
-    .replace(/<(script|style|iframe|object|embed|svg|math|noscript)\b[^>]*\/?>/gi, '')
-  let out = ''
-  let index = 0
-  while (index < source.length) {
-    if (source.startsWith('<!--', index)) {
-      const end = source.indexOf('-->', index + 4)
-      index = end === -1 ? source.length : end + 3
-      continue
-    }
-    if (source[index] !== '<') {
-      const next = source.indexOf('<', index)
-      out += source.slice(index, next === -1 ? source.length : next)
-      index = next === -1 ? source.length : next
-      continue
-    }
-    const end = source.indexOf('>', index + 1)
-    if (end === -1) break
-    const raw = source.slice(index + 1, end).trim()
-    index = end + 1
-    if (!raw || raw.startsWith('!') || raw.startsWith('?')) continue
-    const closing = raw.startsWith('/')
-    const body = (closing ? raw.slice(1) : raw).trim()
-    const selfClose = !closing && /\/$/.test(body)
-    const inner = (selfClose ? body.slice(0, -1) : body).trim()
-    const space = inner.search(/\s/)
-    const name = (space === -1 ? inner : inner.slice(0, space)).toLowerCase()
-    const attrText = space === -1 ? '' : inner.slice(space)
-    if (!ALLOWED.has(name)) continue
-    if (closing) {
-      if (!VOID.has(name)) out += `</${name}>`
-      continue
-    }
-    const attrs = attributesFor(name, attrText)
-    if (attrs === null) continue
-    out += `<${name}${attrs}>`
-  }
-  return out
-}
-
 export function plainTextFromRich(value: string): string {
-  const withBreaks = value.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|h2|h3|li|ul|ol)>/gi, '\n')
+  const withoutMarkdownImages = value.replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
+  const withoutLinks = withoutMarkdownImages.replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
+  const withBreaks = withoutLinks.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|h[1-6]|li|ul|ol)>/gi, '\n')
   const stripped = withBreaks.replace(/<[^>]+>/g, ' ')
   return decodeEntities(stripped)
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/[*_]{1,3}([^*_\n]+)[*_]{1,3}/g, '$1')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim()
 }
 
-export function richHtmlForEditor(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) return ''
-  if (/<[a-z][\s\S]*>/i.test(trimmed)) return sanitizeRichHtml(trimmed)
-  return trimmed
-    .split(/\n{2,}/)
-    .map((part) => `<p>${escapeHtml(part).replace(/\n/g, '<br>')}</p>`)
-    .join('')
-}
-
-export function imageRefsFromHtml(html: string): RichImageRef[] {
+export function imageRefsFromHtml(value: string): RichImageRef[] {
   const refs: RichImageRef[] = []
   const seen = new Set<string>()
-  const pattern = /<img\b([^>]*)>/gi
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(html))) {
-    const attrs = parseAttrs(match[1] ?? '')
-    const key = keyFromMediaUrl(attrs.src ?? '')
-    if (!key || !isMediaKey(key) || seen.has(key)) continue
+  const push = (alt: string, src: string) => {
+    const key = keyFromMediaUrl(src)
+    if (!key || !isMediaKey(key) || seen.has(key)) return
     seen.add(key)
-    refs.push({ key, alt: (attrs.alt ?? '').slice(0, 120) })
+    refs.push({ key, alt: alt.replace(/\s+/g, ' ').trim().slice(0, 120) })
+  }
+  const markdown = /!\[([^\]]*)]\(([^)\s]+)(?:\s+"[^"]*")?\)/g
+  let match: RegExpExecArray | null
+  while ((match = markdown.exec(value))) push(match[1] ?? '', match[2] ?? '')
+  const images = /<img\b([^>]*)>/gi
+  while ((match = images.exec(value))) {
+    const attrs = parseAttrs(match[1] ?? '')
+    push(attrs.alt ?? '', attrs.src ?? '')
   }
   return refs
 }
 
-function attributesFor(tag: string, raw: string): string | null {
-  const attrs = parseAttrs(raw)
-  if (tag === 'a') {
-    const href = safeHref(attrs.href ?? '')
-    return href ? ` href="${escapeHtml(href)}"` : ''
-  }
-  if (tag === 'img') {
-    const key = keyFromMediaUrl(attrs.src ?? '')
-    const src = key ? `/api/media/${key}` : safeRemoteImage(attrs.src ?? '')
-    if (!src) return null
-    const alt = (attrs.alt ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
-    return ` src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"`
-  }
-  return ''
+export function normalizeMarkdownBody(input: string): string {
+  const stripped = input
+    .replace(/\0/g, '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .trim()
+  if (!/<(p|h2|h3|ul|ol|li|img|strong|b|em|i|a|div|br)\b/i.test(stripped)) return stripped
+  return htmlFragmentToMarkdown(stripped)
+}
+
+function htmlFragmentToMarkdown(html: string): string {
+  let text = html
+  text = text.replace(/<img\b([^>]*)>/gi, (_all, attrs: string) => {
+    const parsed = parseAttrs(attrs)
+    return parsed.src ? `![${parsed.alt ?? ''}](${parsed.src})` : ''
+  })
+  text = text.replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (_all, attrs: string, inner: string) => {
+    const href = parseAttrs(attrs).href
+    const label = inner.replace(/<[^>]+>/g, '').trim()
+    return href ? `[${label}](${href})` : label
+  })
+  text = text.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (_all, inner: string) => `\n## ${inner.replace(/<[^>]+>/g, '').trim()}\n`)
+  text = text.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, (_all, inner: string) => `\n### ${inner.replace(/<[^>]+>/g, '').trim()}\n`)
+  text = text.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, (_all, _tag: string, inner: string) => `**${inner.replace(/<[^>]+>/g, '')}**`)
+  text = text.replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, (_all, _tag: string, inner: string) => `*${inner.replace(/<[^>]+>/g, '')}*`)
+  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_all, inner: string) => `\n- ${inner.replace(/<[^>]+>/g, '').trim()}`)
+  text = text.replace(/<br\s*\/?>/gi, '\n')
+  text = text.replace(/<\/(ul|ol|p|div)>/gi, '\n')
+  text = text.replace(/<[^>]+>/g, '')
+  return decodeEntities(text).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 function parseAttrs(raw: string): Record<string, string> {
@@ -117,19 +83,6 @@ function parseAttrs(raw: string): Record<string, string> {
     out[key] = match[2] ?? match[3] ?? match[4] ?? ''
   }
   return out
-}
-
-function safeHref(value: string): string {
-  const href = value.trim().replace(/[\u0000-\u001f\s]/g, '')
-  if (!href) return ''
-  if (keyFromMediaUrl(href)) return href
-  if (/^https?:\/\//i.test(href)) return href
-  return ''
-}
-
-function safeRemoteImage(value: string): string {
-  const src = value.trim().replace(/[\u0000-\u001f\s]/g, '')
-  return /^https:\/\//i.test(src) ? src : ''
 }
 
 function decodeEntities(value: string): string {

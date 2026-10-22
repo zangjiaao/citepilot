@@ -3,37 +3,40 @@ import { readAssetDraft } from '../shared/assets.ts'
 import { contentTypeForAsset } from '../shared/draftPrompt.ts'
 import { isMediaKey, sniffImage } from '../shared/media.ts'
 import { acceptPolishedHtml, htmlKeepsNumbers, polishNotesOffline } from '../shared/polishAsset.ts'
-import { plainTextFromRich, sanitizeRichHtml } from '../shared/richText.ts'
+import { imageRefsFromHtml, normalizeMarkdownBody, plainTextFromRich } from '../shared/richText.ts'
 
 describe('素材正文', () => {
-  it('keeps headings, lists and media images, and drops scripts', () => {
-    const html = sanitizeRichHtml(
-      '<h2>问题</h2><p>值班员翻<strong>手册</strong>。</p><ul><li>按条款切开</li></ul><a href="javascript:alert(1)">坏链接</a><a href="https://example.com/a">出处</a><img src="/api/media/studio-chengchuan/abcd-efgh.jpg" alt="手册页" onerror="alert(1)"><script>alert(1)</script>',
-    )
-    expect(html).toContain('<h2>问题</h2>')
-    expect(html).toContain('<strong>手册</strong>')
-    expect(html).toContain('<li>按条款切开</li>')
-    expect(html).toContain('href="https://example.com/a"')
-    expect(html).not.toContain('javascript:')
-    expect(html).not.toContain('onerror')
-    expect(html).not.toContain('script')
-    expect(html).toContain('src="/api/media/studio-chengchuan/abcd-efgh.jpg"')
-    expect(plainTextFromRich(html)).toContain('值班员翻 手册')
-    expect(plainTextFromRich(html)).not.toContain('<')
+  it('reads markdown and keeps a media image', () => {
+    const body = '## 问题\n\n值班员翻**手册**。\n\n- 按条款切开\n\n![手册页](/api/media/studio-chengchuan/abcd-efgh.jpg)'
+    expect(plainTextFromRich(body)).toContain('值班员翻手册')
+    expect(plainTextFromRich(body)).not.toContain('![')
+    expect(imageRefsFromHtml(body)).toEqual([{ key: 'studio-chengchuan/abcd-efgh.jpg', alt: '手册页' }])
   })
 
-  it('stores image refs from the body and ignores a bad key', () => {
+  it('turns previously stored html into markdown and drops scripts', () => {
+    const markdown = normalizeMarkdownBody(
+      '<h2>问题</h2><p>值班员翻<strong>手册</strong>。</p><ul><li>按条款切开</li></ul><img src="/api/media/studio-chengchuan/abcd-efgh.jpg" alt="手册页"><script>alert(1)</script>',
+    )
+    expect(markdown).toContain('## 问题')
+    expect(markdown).toContain('**手册**')
+    expect(markdown).toContain('- 按条款切开')
+    expect(markdown).toContain('![手册页](/api/media/studio-chengchuan/abcd-efgh.jpg)')
+    expect(markdown).not.toContain('script')
+    expect(markdown).not.toContain('<p>')
+  })
+
+  it('stores image refs from markdown and ignores a bad key', () => {
     const parsed = readAssetDraft({
       type: 'case',
       title: '有图的笔记',
       publicity: 'anonymous',
-      body: '<p>45 分钟。</p><img src="/api/media/studio-chengchuan/abcd-efgh.jpg" alt="手册页"><img src="/api/media/../secret.png" alt="不要">',
+      body: '45 分钟。\n\n![手册页](/api/media/studio-chengchuan/abcd-efgh.jpg)\n\n![不要](/api/media/../secret.png)',
       details: { images: [{ id: 'keep', key: 'studio-chengchuan/abcd-efgh.jpg', alt: '' }] },
     })
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     expect(parsed.value.details.images).toEqual([{ id: 'keep', key: 'studio-chengchuan/abcd-efgh.jpg', alt: '手册页' }])
-    expect(parsed.value.body).not.toContain('secret')
+    expect(parsed.value.body).not.toContain('<img')
   })
 
   it('recognizes a png and a media key', () => {
@@ -45,16 +48,17 @@ describe('素材正文', () => {
 })
 
 describe('打磨素材', () => {
-  it('splits existing sentences and does not add numbers', () => {
+  it('splits existing sentences into markdown and does not add numbers', () => {
     const notes = '值班员要翻三本手册。后来改成按条款号切开。'
-    const html = polishNotesOffline(notes)
-    expect(html).toContain('值班员要翻三本手册')
-    expect(html).toContain('后来改成按条款号切开')
-    expect(html).toContain('<h2>客户当时的问题</h2>')
-    expect(htmlKeepsNumbers(notes, html)).toBe(true)
-    expect(acceptPolishedHtml({ body: '<p>变成 99 分钟。</p>' }, notes)).toBeNull()
-    expect(acceptPolishedHtml({ body: '<p>行业领先的方案。</p>' }, notes)).toBeNull()
-    expect(polishNotesOffline('只有一句。')).toBe('<p>只有一句。</p>')
+    const markdown = polishNotesOffline(notes)
+    expect(markdown).toContain('值班员要翻三本手册')
+    expect(markdown).toContain('后来改成按条款号切开')
+    expect(markdown).toContain('## 客户当时的问题')
+    expect(markdown).not.toContain('<p>')
+    expect(htmlKeepsNumbers(notes, markdown)).toBe(true)
+    expect(acceptPolishedHtml({ body: '变成 99 分钟。' }, notes)).toBeNull()
+    expect(acceptPolishedHtml({ body: '行业领先的方案。' }, notes)).toBeNull()
+    expect(polishNotesOffline('只有一句。')).toBe('只有一句。')
   })
 })
 
