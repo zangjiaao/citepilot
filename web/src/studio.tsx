@@ -4,7 +4,7 @@ import { api } from './api'
 
 interface Health {
   ok: boolean
-  llm: { enabled: boolean; model: string; baseUrl: string }
+  llm: { enabled: boolean; model: string; baseUrl: string; label?: string; source?: string }
 }
 
 interface StudioContextValue {
@@ -77,6 +77,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
 export function useStudio(): StudioContextValue {
   const value = useContext(StudioContext)
-  if (!value) throw new Error('工作室上下文还没有准备好')
+  if (!value) throw new Error('品牌上下文还没有准备好')
   return value
 }

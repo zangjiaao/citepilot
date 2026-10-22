@@ -10,12 +10,14 @@ import { styles } from './styles'
 
 const NAV = [
   { to: '/', label: '概览', icon: 'info' },
-  { to: '/studio', label: '档案', icon: 'wrench' },
+  { to: '/studio', label: '品牌', icon: 'wrench' },
+  { to: '/library', label: '素材库', icon: 'checkDouble' },
   { to: '/prompts', label: '题库', icon: 'viewColumns' },
   { to: '/monitor', label: '监测', icon: 'search' },
   { to: '/diagnosis', label: '诊断', icon: 'check' },
   { to: '/drafts', label: '内容起草', icon: 'copy' },
   { to: '/compare', label: '对比', icon: 'arrowsUpDown' },
+  { to: '/settings', label: '设置', icon: 'menu' },
 ] as const
 
 export function App() {
@@ -44,7 +46,8 @@ function Shell() {
             studios.length > 0 ? (
               <VStack gap={2}>
                 <Selector
-                  label="当前工作室"
+                  label="当前品牌"
+                  placement="above"
                   value={studioId}
                   options={studios.map((studio) => ({ value: studio.id, label: studio.name }))}
                   onChange={(value) => {

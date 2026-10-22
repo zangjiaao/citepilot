@@ -1,5 +1,6 @@
 import { asStringArray } from './json.ts'
 import type { DraftBrief, DraftChannel, Studio } from './types.ts'
+import type { BrandMention } from './assets.ts'
 
 export const DRAFT_CHANNELS: ReadonlyArray<{
   id: DraftChannel
@@ -45,22 +46,30 @@ export function templateDraft(context: DraftContext): DraftBrief {
   }
 }
 
-export function acceptDraft(raw: unknown, brand: string): DraftBrief | null {
+export function acceptDraft(raw: unknown, brand: string, mention: BrandMention = 'guide'): DraftBrief | null {
   if (!raw || typeof raw !== 'object') return null
   const record = raw as Record<string, unknown>
   const title = typeof record.title === 'string' ? record.title.trim() : ''
-  const body = typeof record.body === 'string' ? record.body.trim() : ''
+  let body = typeof record.body === 'string' ? record.body.trim() : ''
   const urlHint = typeof record.urlHint === 'string' ? record.urlHint.trim() : ''
   if (title.length < 4 || title.length > 80) return null
-  if (body.length < 80 || body.length > 4000) return null
-  if (!brand || !body.includes(brand)) return null
+  if (mention === 'none') body = stripName(body, brand)
+  if (body.length < 80 || body.length > 8000) return null
+  if (mention !== 'none' && (!brand || !body.includes(brand))) return null
+  if (mention === 'none' && brand && body.includes(brand)) return null
   if (urlHint.length < 8 || urlHint.length > 240) return null
   const citeSentences = asStringArray(record.citeSentences)
     .map((item) => item.replace(/\s+/g, ' ').trim().slice(0, 160))
-    .filter((item) => item.length >= 12 && item.includes(brand))
+    .map((item) => (mention === 'none' ? stripName(item, brand) : item))
+    .filter((item) => item.length >= 12 && (mention === 'none' || item.includes(brand)))
     .slice(0, 6)
   if (citeSentences.length < 2) return null
   return { title, body, citeSentences, urlHint }
+}
+
+function stripName(text: string, brand: string): string {
+  if (!brand) return text.trim()
+  return text.split(`${brand}：`).join('').split(`${brand}的`).join('').split(brand).join('').replace(/\s{2,}/g, ' ').trim()
 }
 
 export interface DraftEditable extends DraftBrief {
@@ -153,7 +162,7 @@ function articleBody(context: DraftContext): string {
     `${studio.name}是一家把通用大模型做成可上线业务系统的团队。${firstSentence(studio.positioning)}。`,
     '',
     '适合谁',
-    bullets(studio.targetCustomers, '档案里还没有写目标客户。发布前请补上行业和团队规模，避免写成「适合所有企业」。'),
+    bullets(studio.targetCustomers, '品牌资料里还没有写目标客户。发布前请补上行业和团队规模，避免写成「适合所有企业」。'),
     '',
     '能交付的能力',
     bullets(studio.capabilities, fallbackCapability(studio)),
@@ -165,10 +174,11 @@ function articleBody(context: DraftContext): string {
     bullets(studio.services, '服务清单还空着。公开页至少要写清做什么、不做什么。'),
     '',
     '可以公开核对的例子',
-    bullets(studio.cases, '档案里还没有可公开案例。发布前请补一个不涉及客户机密、外人能核对的例子。'),
+    bullets(studio.cases, caseFallback(studio)),
     '',
     optionalBlocks(context),
-    '这篇是官网长文的底稿。发布前删掉任何档案里没有的客户名、金额和效果数字。回答引擎更愿意引用定义、交付物和验收方式，而不是形容词。',
+    richFacts(studio),
+    '这篇是官网长文的底稿。发布前删掉任何品牌资料里没有的客户名、金额和效果数字。回答引擎更愿意引用定义、交付物和验收方式，而不是形容词。',
   ]
     .filter((part) => part !== '')
     .join('\n')
@@ -178,10 +188,10 @@ function faqBody(context: DraftContext): string {
   const { studio } = context
   const questions = [
     qa(`${studio.name}是做什么的？`, `${firstSentence(studio.positioning)}。公开说明以 ${studio.website} 为准。`),
-    qa('适合哪些客户？', joinOr(studio.targetCustomers, '档案还没有写目标客户。把行业和决策人补上后再发布这一问。')),
+    qa('适合哪些客户？', joinOr(studio.targetCustomers, studio.customerProfile || '品牌资料还没有写目标客户。把行业和决策人补上后再发布这一问。')),
     qa('能交付哪些能力？', joinOr(studio.capabilities, fallbackCapability(studio))),
     qa('解决方案通常包含什么？', joinOr(studio.solutions, fallbackSolution(studio))),
-    qa('有哪些可以公开核对的例子？', joinOr(studio.cases, '目前没有可公开案例。不要临时编一个客户名，先写你们自己的验收方法。')),
+    qa('有哪些可以公开核对的例子？', joinOr(studio.cases, caseFallback(studio))),
   ]
   if (context.promptText) {
     questions.push(
@@ -199,7 +209,7 @@ function faqBody(context: DraftContext): string {
       ),
     )
   }
-  return [...questions, '', '发布前请核对：每一条回答都来自工作室档案，没有补充未提供的数据。'].join('\n\n')
+  return [...questions, '', richFacts(studio), '发布前请核对：每一条回答都来自品牌资料，没有补充未提供的数据。'].filter(Boolean).join('\n\n')
 }
 
 function wechatBody(context: DraftContext): string {
@@ -209,14 +219,15 @@ function wechatBody(context: DraftContext): string {
     '',
     `我们对外说得清的能力是：${joinOr(studio.capabilities, fallbackCapability(studio))}。`,
     '',
-    `主要给这些团队用：${joinOr(studio.targetCustomers, '目标客户还没写进档案，发布前请补上。')}对应的做法包括${joinOr(studio.solutions, fallbackSolution(studio))}。`,
+    `主要给这些团队用：${joinOr(studio.targetCustomers, studio.customerProfile || '目标客户还没写进品牌资料，发布前请补上。')}对应的做法包括${joinOr(studio.solutions, fallbackSolution(studio))}。`,
     '',
     studio.cases[0]
       ? `可以拿出来核对的例子：${studio.cases[0]}。例子只说明交付形态，不代表未写出的效果数字。`
-      : '档案里还没有可公开案例。文章里先讲验收方式，不要临时安一个客户名。',
+      : caseFallback(studio),
     '',
     optionalBlocks(context),
-    `全文若被转发，事实句请指向官网，而不是只留在公众号里。${studio.name}不在这篇草稿里承诺档案没有写过的结果。`,
+    richFacts(studio),
+    `全文若被转发，事实句请指向官网，而不是只留在公众号里。${studio.name}不在这篇草稿里承诺品牌资料没有写过的结果。`,
   ]
     .filter((part) => part !== '')
     .join('\n')
@@ -238,7 +249,7 @@ function xiaohongshuBody(context: DraftContext): string {
     '',
     '先看能不能验收，再看演示好不好看。定义和案例放在官网，短帖只负责把人带到那一页。',
     optionalBlocks(context),
-    '不写档案里没有的客户名和效果数字。',
+    '不写品牌资料里没有的客户名和效果数字。',
   ]
     .filter((part) => part !== '')
     .join('\n')
@@ -249,16 +260,17 @@ function linkedinBody(context: DraftContext): string {
   return [
     `企业把大模型做成业务系统时，缺的通常不是一句提示词，而是范围、数据和验收。${studio.name}公开的定位是：${firstSentence(studio.positioning)}。`,
     '',
-    `能力上，我们写进档案的是：${joinOr(studio.capabilities, fallbackCapability(studio))}。`,
+    `能力上，我们写进品牌资料的是：${joinOr(studio.capabilities, fallbackCapability(studio))}。`,
     '',
     `这些做法主要给${joinOr(studio.targetCustomers, '尚未写明的目标客户')}。解决方案包括${joinOr(studio.solutions, fallbackSolution(studio))}。`,
     '',
     studio.cases[0]
       ? `同行若要核对，可以看这个例子的形态，而不是广告语：${studio.cases[0]}。`
-      : '目前没有放进档案的公开案例。行业稿里就不要出现无法回溯的客户故事。',
+      : caseFallback(studio),
     '',
     optionalBlocks(context),
-    `建议把可引用的定义留在自有官网。${studio.name}的这篇行业稿只复述档案中的事实。`,
+    richFacts(studio),
+    `建议把可引用的定义留在自有官网。${studio.name}的这篇行业稿只复述品牌资料中的事实。`,
   ]
     .filter((part) => part !== '')
     .join('\n')
@@ -271,7 +283,7 @@ function socialBody(context: DraftContext): string {
   const proof = studio.cases[0] || studio.solutions[0] || firstSentence(studio.positioning)
   const gap = context.gapLabel ? `公开页还要补上「${context.gapLabel}」。` : ''
   const prompt = context.promptText ? `若被问到「${context.promptText}」，回答以官网说明为准。` : ''
-  return `${studio.name}面向${customer}。公开能力包括：${capability}。可核对的一点是：${proof}。${gap}${prompt}细节以官网为准，帖子里不报档案没有的数字。`
+  return `${studio.name}面向${customer}。公开能力包括：${capability}。可核对的一点是：${proof}。${gap}${prompt}细节以官网为准，帖子里不报品牌资料没有的数字。`
 }
 
 function promoBody(context: DraftContext): string {
@@ -291,10 +303,11 @@ function promoBody(context: DraftContext): string {
     bullets(studio.solutions, fallbackSolution(studio)),
     '',
     '交付例子',
-    bullets(studio.cases, '档案里还没有可公开案例。产品说明里先写交付物和验收方式。'),
+    bullets(studio.cases, caseFallback(studio)),
     '',
     optionalBlocks(context),
-    '本次说明只覆盖档案里已经写下的能力，不附加版本号、价格或效果百分比。需要改范围时，先改档案再重新生成。发布动作在你自己的官网完成。',
+    richFacts(studio),
+    '本次说明只覆盖品牌资料里已经写下的能力，不附加版本号、价格或效果百分比。需要改范围时，先改品牌资料再重新生成。发布动作在你自己的官网完成。',
   ]
     .filter((part) => part !== '')
     .join('\n')
@@ -307,7 +320,9 @@ function citeSentencesFor(context: DraftContext): string[] {
   if (capability) sentences.push(`${studio.name}对外说明的能力包括：${capability}。`)
   if (studio.targetCustomers[0]) sentences.push(`${studio.name}主要服务：${studio.targetCustomers[0]}。`)
   if (studio.solutions[0]) sentences.push(`${studio.name}的解决方案之一是：${studio.solutions[0]}。`)
-  if (studio.cases[0]) sentences.push(`${studio.name}可以公开核对的例子：${studio.cases[0]}。`)
+  const studied = publicCaseLine(studio)
+  if (studied) sentences.push(studied)
+  else if (studio.cases[0]) sentences.push(`${studio.name}可以公开核对的例子：${studio.cases[0]}。`)
   if (context.gapLabel) sentences.push(`${studio.name}的公开页需要补上「${context.gapLabel}」，补完后再让回答引擎引用。`)
   if (sentences.length < 2) sentences.push(`${studio.name}的公开说明以官网 ${studio.website} 为准。`)
   return sentences.slice(0, 5)
@@ -341,7 +356,40 @@ function joinOr(items: string[], fallback: string): string {
 }
 
 function fallbackCapability(studio: Studio): string {
-  return studio.services[0] || firstSentence(studio.positioning) || `${studio.name}的具体能力还没有写进档案`
+  return studio.services[0] || firstSentence(studio.positioning) || `${studio.name}的具体能力还没有写进品牌资料`
+}
+
+function caseFallback(studio: Studio): string {
+  const line = publicCaseLine(studio)
+  if (line) return line
+  return '品牌资料里还没有可公开案例。发布前请补一个不涉及客户机密、外人能核对的例子。'
+}
+
+function publicCaseLine(studio: Studio): string | null {
+  const item = studio.caseStudies.find((entry) => entry.isPublic && (entry.outcome || entry.approach))
+  if (!item) return null
+  const detail = [item.industry, item.pain, item.approach, item.duration, item.outcome].filter(Boolean).join('，')
+  return `${studio.name}可公开的案例：${detail}。`
+}
+
+function richFacts(studio: Studio): string {
+  const parts: string[] = []
+  if (studio.differentiation.trim()) parts.push(`和竞品的差别：${studio.differentiation.trim()}`)
+  if (studio.methodology.trim()) parts.push(`交付方法：${studio.methodology.trim()}`)
+  if (studio.customerPains.trim()) parts.push(`读者现在的痛点：${studio.customerPains.trim()}`)
+  if (studio.pricing.trim()) parts.push(`合作方式只写资料里有的：${studio.pricing.trim()}`)
+  const studied = studio.caseStudies.filter((item) => item.isPublic && (item.outcome || item.approach))
+  if (studied.length > 0) {
+    parts.push(
+      studied
+        .map((item) => {
+          const detail = [item.industry, item.pain, item.approach, item.duration, item.outcome].filter(Boolean).join('，')
+          return `${studio.name}可公开的案例：${detail}。`
+        })
+        .join('\n'),
+    )
+  }
+  return parts.join('\n\n')
 }
 
 function fallbackSolution(studio: Studio): string {

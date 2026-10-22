@@ -3,19 +3,23 @@ import { compareCycles, metricsFor, type MetricScope } from '../shared/compare.t
 import { competitorNames, parseCompetitorList } from '../shared/competitors.ts'
 import { defaultCycleName } from '../shared/cycles.ts'
 import { buildDiagnosis } from '../shared/diagnose.ts'
-import { acceptDraft, channelLabel, copyDraftTitle, isDraftChannel, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
+import { acceptDraft, channelLabel, copyDraftTitle, DRAFT_CHANNELS, isDraftChannel, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
 import { parseAnswer, summarize } from '../shared/parseAnswer.ts'
 import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.ts'
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
+import { readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
+import { applyBrandMention, assembleDraftPrompt, channelForContentType, isContentType, materialDraft, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
+import { readAssetDraft } from '../shared/assets.ts'
 import { assertPublicHttpUrl } from '../shared/ssrf.ts'
 import type { Cluster, ContentDraft, Cycle, CycleTrendPoint, Diagnosis, DraftPreview, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
 import {
   deleteCycle,
   deleteDraft,
   deleteObservation,
-  getDraft,
   deletePrompt,
+  deleteStudio,
+  getDraft,
   insertCycle,
   insertDiagnosis,
   insertDraft,
@@ -33,12 +37,17 @@ import {
   updateDraft,
   updateStudio,
 } from './db.ts'
-import { llmConfig, type AppBindings } from './env.ts'
+import type { AppBindings } from './env.ts'
 import { HttpError } from './errors.ts'
 import { fetchPublic } from './fetchPage.ts'
-import { acceptGeneratedPrompts, acceptOwnSentiment, acceptSuggestions, acceptSummary, deepseekJson } from './llm.ts'
+import { acceptGeneratedPrompts, acceptOwnSentiment, acceptSuggestions, acceptSummary, completeJson } from './llm.ts'
+import { registerModelRoutes } from './modelRoutes.ts'
+import { llmStatus, resolveLlm } from './models.ts'
+import { assetFromDraft, countAssets, deleteAsset, getAsset, insertAsset, listAssets, updateAsset } from './assets.ts'
 
 export const app = new Hono<{ Bindings: AppBindings }>()
+
+registerModelRoutes(app)
 
 app.onError((error, c) => {
   if (error instanceof HttpError) {
@@ -53,16 +62,13 @@ app.onError((error, c) => {
   return c.json({ error: '服务器处理请求时出错' }, 500)
 })
 
-app.get('/api/health', (c) => {
-  const llm = llmConfig(c.env)
-  return c.json({
-    ok: true,
-    llm: { enabled: llm.enabled, model: llm.model, baseUrl: llm.baseUrl },
-  })
+app.get('/api/health', async (c) => {
+  const llm = await llmStatus(c.env.DB, c.env)
+  return c.json({ ok: true, llm })
 })
 
-app.get('/api/meta', (c) => {
-  const llm = llmConfig(c.env)
+app.get('/api/meta', async (c) => {
+  const llm = await llmStatus(c.env.DB, c.env)
   return c.json({
     platforms: PLATFORMS,
     clusters: [
@@ -108,6 +114,15 @@ app.put('/api/studios/:id', async (c) => {
   return c.json({ studio })
 })
 
+app.delete('/api/studios/:id', async (c) => {
+  const existing = await mustStudio(c.env.DB, c.req.param('id'))
+  const body = await readJson(c)
+  const confirmName = typeof (body as { confirmName?: unknown })?.confirmName === 'string' ? (body as { confirmName: string }).confirmName.trim() : ''
+  if (confirmName !== existing.name) throw new HttpError(400, '请输入完整的品牌名称以确认删除', 'confirmName')
+  await deleteStudio(c.env.DB, existing.id)
+  return c.json({ ok: true })
+})
+
 app.get('/api/studios/:id/overview', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
   const [prompts, storedObservations, cycles, diagnoses] = await Promise.all([
@@ -118,7 +133,7 @@ app.get('/api/studios/:id/overview', async (c) => {
   ])
   const observations = hydrateObservations(storedObservations, studio)
   const scope = metricScope(studio)
-  const llm = llmConfig(c.env)
+  const llm = await llmStatus(c.env.DB, c.env)
   const ordered = [...cycles].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   const earliest = ordered[0] ?? null
   const latestCycle = ordered.at(-1) ?? null
@@ -204,24 +219,24 @@ app.post('/api/studios/:id/prompts', async (c) => {
 app.post('/api/studios/:id/prompts/generate', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
   const existing = await listPrompts(c.env.DB, studio.id)
-  const llm = llmConfig(c.env)
+  const llm = await resolveLlm(c.env.DB, c.env, 'generate')
   let created: Prompt[] = []
   let source: 'template' | 'llm' = 'template'
   let warning = ''
   if (llm.enabled) {
     try {
-      const raw = await deepseekJson(
-        c.env,
-        '你是 GEO/AEO 题库编辑，帮智能体应用工作室准备要拿去问 ChatGPT、DeepSeek、豆包、Kimi 等回答引擎的中文问题。问题要像真实采购或研究者会问的话，不要写成广告。只输出 JSON：{"prompts":[{"cluster":"brand|category|comparison|scenario","text":"...","rationale":"..."}]}',
+      const raw = await completeJson(
+        llm,
+        '你是 GEO/AEO 题库编辑，帮一个品牌准备要拿去问 ChatGPT、DeepSeek、豆包、Kimi 等回答引擎的中文问题。问题要像真实采购或研究者会问的话，不要写成广告。只输出 JSON：{"prompts":[{"cluster":"brand|category|comparison|scenario","text":"...","rationale":"..."}]}',
         [
-          `工作室：${studio.name}`,
+          `品牌：${studio.name}`,
           `官网：${studio.website}`,
           `定位：${studio.positioning}`,
           `服务：${studio.services.join('、') || '未填'}`,
           `竞品：${competitorNames(studio.competitors).join('、') || '未填'}`,
           `关键词：${studio.keywords.join('、') || '未填'}`,
           `已有题目，不要重复：${existing.map((item) => item.text).join('；') || '无'}`,
-          '请新写 8 题，四个簇都要有。品牌题必须出现工作室名称。对比题必须同时出现工作室名称和至少一个竞品。品类题不要塞进品牌名。',
+          '请新写 8 题，四个簇都要有。品牌题必须出现品牌名称。对比题必须同时出现品牌名称和至少一个竞品。品类题不要塞进品牌名。',
         ].join('\n'),
         0.7,
       )
@@ -307,10 +322,11 @@ app.post('/api/studios/:id/observations', async (c) => {
     competitors: studio.competitors,
   })
   let parser: Observation['parser'] = 'rules'
-  if (llmConfig(c.env).enabled) {
+  const analyze = await resolveLlm(c.env.DB, c.env, 'analyze')
+  if (analyze.enabled) {
     try {
-      const raw = await deepseekJson(
-        c.env,
+      const raw = await completeJson(
+        analyze,
         '你是 GEO 监测助手。规则解析已经给出品牌是否出现、排名、网址和竞品。请只根据这些事实和回答原文，用中文写一段 80 字以内的摘要。不要发明规则结果里没有的网址、品牌或排名。如果品牌被提到，再判断回答对本品牌的态度，只能是 positive、neutral 或 negative：明显推荐或夸奖用 positive，明显劝退或批评用 negative，其余用 neutral。品牌没被提到时 sentiment 用 neutral。只输出 JSON：{"summary":"...","sentiment":"positive|neutral|negative"}',
         `规则结果：${JSON.stringify({ ...parsed, summary: undefined })}\n回答原文：${answerText.slice(0, 4000)}`,
         0.2,
@@ -392,10 +408,11 @@ app.post('/api/studios/:id/diagnoses', async (c) => {
   })
   let suggestions = report.suggestions
   let suggestionSource: Diagnosis['suggestionSource'] = 'rules'
-  if (llmConfig(c.env).enabled) {
+  const analyze = await resolveLlm(c.env.DB, c.env, 'analyze')
+  if (analyze.enabled) {
     try {
-      const raw = await deepseekJson(
-        c.env,
+      const raw = await completeJson(
+        analyze,
         '你是 GEO/AEO 顾问。下面是对公开网页的检查清单。只根据清单里已经出现的未通过项，用中文给出 5 条可执行建议，按优先级排序。不要声称清单里没有的项目已经通过或失败。只输出 JSON：{"suggestions":["..."]}',
         `页面：${page.url}\n清单：${JSON.stringify(report.checklist)}`,
         0.3,
@@ -426,6 +443,39 @@ app.post('/api/studios/:id/diagnoses', async (c) => {
   await insertDiagnosis(c.env.DB, diagnosis)
   console.log(JSON.stringify({ message: 'diagnosis stored', url: page.url, status: page.status, source: suggestionSource }))
   return c.json({ diagnosis }, 201)
+})
+
+app.get('/api/studios/:id/assets', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  return c.json({ assets: await listAssets(c.env.DB, studio.id) })
+})
+
+app.post('/api/studios/:id/assets', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const parsed = readAssetDraft(await readJson(c))
+  if (!parsed.ok) throw new HttpError(400, parsed.error, parsed.field)
+  if ((await countAssets(c.env.DB, studio.id)) >= 500) throw new HttpError(400, '素材库已有 500 条，上限是 500 条', 'title')
+  const now = new Date().toISOString()
+  const asset = assetFromDraft(crypto.randomUUID(), studio.id, parsed.value, now)
+  await insertAsset(c.env.DB, asset)
+  return c.json({ asset }, 201)
+})
+
+app.put('/api/studios/:id/assets/:assetId', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const existing = await getAsset(c.env.DB, studio.id, c.req.param('assetId'))
+  if (!existing) throw new HttpError(404, '没有找到这条素材')
+  const parsed = readAssetDraft(await readJson(c))
+  if (!parsed.ok) throw new HttpError(400, parsed.error, parsed.field)
+  const asset = assetFromDraft(existing.id, studio.id, parsed.value, new Date().toISOString(), existing.createdAt)
+  await updateAsset(c.env.DB, asset)
+  return c.json({ asset })
+})
+
+app.delete('/api/studios/:id/assets/:assetId', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  await deleteAsset(c.env.DB, studio.id, c.req.param('assetId'))
+  return c.json({ ok: true })
 })
 
 app.get('/api/studios/:id/drafts', async (c) => {
@@ -462,26 +512,31 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     }
   }
 
-  const context = { studio, channel: channelRaw, promptText, gapLabel, gapDetail }
-  let brief = templateDraft(context)
+  const options = parseDraftOptions(record, channelRaw)
+  const picked = parseAssetIds(record.assetIds)
+  if (!picked.ok) throw new HttpError(400, picked.error, 'assetIds')
+  const library = picked.ids.length > 0 ? await listAssets(c.env.DB, studio.id) : []
+  const assets = picked.ids.map((id) => library.find((item) => item.id === id))
+  if (assets.some((item) => !item)) throw new HttpError(404, '有一条勾选的素材已经不在库里')
+  const selected = assets.filter((item): item is NonNullable<typeof item> => Boolean(item))
+  const hidden = selected.find((item) => item.publicity === 'private')
+  if (hidden) throw new HttpError(400, `「${hidden.title}」标成不可公开，不会用来起草`)
+  const channel = typeof record.contentType === 'string' && isContentType(record.contentType) ? channelForContentType(options.contentType) : channelRaw
+  const channelMeta = DRAFT_CHANNELS.find((item) => item.id === channel) ?? DRAFT_CHANNELS[0]
+  const context = { studio, channel, promptText, gapLabel, gapDetail }
+  let brief = selected.length > 0 ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention) : templateDraft(context)
   let source: DraftPreview['source'] = 'template'
-  if (llmConfig(c.env).enabled) {
+  const writer = await resolveLlm(c.env.DB, c.env, 'generate')
+  if (writer.enabled) {
     try {
-      const raw = await deepseekJson(
-        c.env,
-        '你是 GEO/AEO 内容编辑。只根据用户给出的工作室档案改写草稿，不要新增客户名、金额、百分比或未提供的案例。正文必须出现工作室名称。只输出 JSON：{"title":"","body":"","citeSentences":["",""],"urlHint":""}。citeSentences 是 3 到 5 句可以单独被回答引擎引用的话，每句都包含工作室名称。urlHint 必须包含给定官网主机名，并说明内容应该落在哪个地址。',
-        `渠道：${channelLabel(channelRaw)}\n官网：${studio.website}\n档案：${JSON.stringify({
-          name: studio.name,
-          positioning: studio.positioning,
-          capabilities: studio.capabilities,
-          cases: studio.cases,
-          targetCustomers: studio.targetCustomers,
-          solutions: studio.solutions,
-          services: studio.services,
-        })}\n题目：${promptText || '无'}\n诊断缺口：${gapLabel || '无'} ${gapDetail}\n模板草稿：${JSON.stringify(brief)}\n请按该渠道的写法重写，保留事实。`,
-        0.4,
+      const prompt = assembleDraftPrompt(
+        studio,
+        options,
+        { promptText, gapLabel, gapDetail, channelLabel: channelLabel(channel) },
+        selected,
       )
-      const accepted = acceptDraft(raw, studio.name)
+      const raw = await completeJson(writer, prompt.system, `${prompt.user}\n底稿：${JSON.stringify(brief)}\n把勾选的素材合成一篇，先写客户侧的变化。`, 0.4)
+      const accepted = acceptDraft(raw, studio.name, options.brandMention)
       if (accepted) {
         const host = new URL(studio.website).host
         if (!accepted.urlHint.includes(host)) accepted.urlHint = brief.urlHint
@@ -493,10 +548,30 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
       console.error(JSON.stringify({ message: 'draft text fell back', error: message }))
     }
   }
+  let polished = rewriteGenericSentences(brief.body, selected, options.allowBragging)
+  if (writer.enabled && polished.flags.length > 0) {
+    try {
+      const raw = await completeJson(
+        writer,
+        '你在做自夸和数字自检。把标出的句子改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。只输出 JSON：{"body":"..."}',
+        `要改的句子：${polished.flags.join('\n')}\n原文：${brief.body}`,
+        0.2,
+      )
+      const next = raw && typeof raw === 'object' && typeof (raw as { body?: unknown }).body === 'string' ? (raw as { body: string }).body.trim() : ''
+      const brandOk = options.brandMention === 'none' ? !next.includes(studio.name) : next.includes(studio.name)
+      if (next.length >= 80 && brandOk) brief = { ...brief, body: next }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(JSON.stringify({ message: 'draft self-check fell back', error: message }))
+    }
+    polished = rewriteGenericSentences(brief.body, selected, options.allowBragging)
+  }
+  brief = applyBrandMention({ ...brief, body: polished.body }, studio.name, studio.website, options.brandMention)
+  const gaps = profileGaps(studio, options, selected)
 
   const draft: DraftPreview = {
     ...brief,
-    channel: channelRaw,
+    channel,
     source,
     promptId: promptId || null,
     promptText,
@@ -504,8 +579,8 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     gapId: gapId || null,
     gapLabel,
   }
-  console.log(JSON.stringify({ message: 'draft generated', channel: channelRaw, source }))
-  return c.json({ draft })
+  console.log(JSON.stringify({ message: 'draft generated', channel, source, gaps: gaps.length, flags: polished.flags.length }))
+  return c.json({ draft, gaps, flags: polished.flags })
 })
 
 app.post('/api/studios/:id/drafts', async (c) => {
@@ -643,7 +718,7 @@ function studioFromBody(body: unknown): Omit<Studio, 'id' | 'createdAt' | 'updat
   const name = stringField(record, 'name').trim()
   const website = stringField(record, 'website').trim()
   const positioning = stringField(record, 'positioning').trim()
-  if (name.length < 2 || name.length > 80) throw new HttpError(400, '工作室名称需要 2 到 80 个字', 'name')
+  if (name.length < 2 || name.length > 80) throw new HttpError(400, '品牌名称需要 2 到 80 个字', 'name')
   if (positioning.length < 10 || positioning.length > 2000) throw new HttpError(400, `定位有 ${positioning.length} 字，需要 10 到 2000 个字`, 'positioning')
   let parsed: URL
   try {
@@ -651,6 +726,8 @@ function studioFromBody(body: unknown): Omit<Studio, 'id' | 'createdAt' | 'updat
   } catch (error) {
     throw new HttpError(400, error instanceof Error ? error.message : '官网地址不正确', 'website')
   }
+  const profile = readBrandProfile(record)
+  if (!profile.ok) throw new HttpError(400, profile.error, profile.field)
   return {
     name,
     website: parsed.toString(),
@@ -662,6 +739,7 @@ function studioFromBody(body: unknown): Omit<Studio, 'id' | 'createdAt' | 'updat
     cases: studioList(record.cases ?? [], 'cases'),
     targetCustomers: studioList(record.targetCustomers ?? [], 'targetCustomers'),
     solutions: studioList(record.solutions ?? [], 'solutions'),
+    ...profile.profile,
   }
 }
 

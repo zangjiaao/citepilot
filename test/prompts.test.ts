@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { templatePrompts } from '../shared/prompts.ts'
 import { acceptGeneratedPrompts, acceptOwnSentiment } from '../worker/llm.ts'
+import { blankBrandProfile } from '../shared/brandProfile.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -18,6 +19,7 @@ const studio: Studio = {
   cases: [],
   targetCustomers: [],
   solutions: [],
+  ...blankBrandProfile(),
   createdAt: '',
   updatedAt: '',
 }

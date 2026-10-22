@@ -43,16 +43,16 @@ export function OverviewPage() {
     >
       <VStack gap={4}>
         <ErrorBanner message={shellError || error} />
-        {loading ? <Text type="supporting">正在读取工作室…</Text> : null}
-        {!loading && !studioId ? <Text>还没有工作室。到档案页新建一个。</Text> : null}
+        {loading ? <Text type="supporting">正在读取品牌…</Text> : null}
+        {!loading && !studioId ? <Text>还没有品牌。到品牌页新建一个。</Text> : null}
         {llm && !llm.enabled ? (
           <InfoBanner
             title="当前使用规则和模板"
-            description="没有配置 DeepSeek 密钥。题库、回答摘要、本品牌情感和诊断建议都会走本地规则。配上密钥后，摘要和正/中/负情感改由模型标注；品牌是否出现、排名和网址仍以规则为准。"
+            description="没有配置模型密钥。题库、回答摘要、本品牌情感和诊断建议都会走本地规则。到「设置」里添加模型，或配置 DEEPSEEK_API_KEY。配上之后，摘要和正/中/负情感改由模型标注；品牌是否出现、排名和网址仍以规则为准。"
           />
         ) : null}
         {llm?.enabled ? (
-          <InfoBanner title={`已连接 ${llm.model}`} description="生成题目和诊断建议会优先使用 DeepSeek。模型失败时自动退回模板和规则。" />
+          <InfoBanner title={`已连接 ${llm.label || llm.model}`} description="生成题目和诊断建议会优先使用这套模型。模型失败时自动退回模板和规则。" />
         ) : null}
         <VStack gap={3}>
           <Heading level={2}>监测循环</Heading>

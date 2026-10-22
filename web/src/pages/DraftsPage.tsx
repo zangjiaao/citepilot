@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@astryxdesign/core/Button'
+import { CheckboxList, CheckboxListItem } from '@astryxdesign/core/CheckboxList'
 import { FormLayout } from '@astryxdesign/core/FormLayout'
 import { Heading } from '@astryxdesign/core/Heading'
 import { HStack } from '@astryxdesign/core/HStack'
@@ -11,13 +12,15 @@ import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { VStack } from '@astryxdesign/core/VStack'
+import { CONTENT_TYPES, channelForContentType, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
+import { assetTypeLabel, type Asset } from '../../../shared/assets.ts'
 import { channelLabel, DRAFT_CHANNELS, formatDraftForCopy } from '../../../shared/drafts.ts'
 import { SOURCE_LABEL } from '../../../shared/platforms.ts'
 import type { ContentDraft, Diagnosis, DraftChannel, DraftPreview, Prompt } from '../../../shared/types.ts'
 import { api } from '../api'
 import { formatTime } from '../format'
 import { useStudio } from '../studio'
-import { ErrorBanner, InfoBanner, PageFrame } from '../ui'
+import { ErrorBanner, InfoBanner, PageFrame, WarningBanner } from '../ui'
 
 interface DraftRow extends Record<string, unknown> {
   id: string
@@ -34,6 +37,16 @@ export function DraftsPage() {
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([])
   const [drafts, setDrafts] = useState<ContentDraft[]>([])
   const [channel, setChannel] = useState<DraftChannel>('product-promo')
+  const [contentType, setContentType] = useState<ContentType>('case-breakdown')
+  const [assetIds, setAssetIds] = useState<string[]>([])
+  const [assets, setAssets] = useState<Asset[]>([])
+  const [assetQuery, setAssetQuery] = useState('')
+  const [brandMention, setBrandMention] = useState<BrandMention>('none')
+  const [audience, setAudience] = useState('')
+  const [tone, setTone] = useState('')
+  const [length, setLength] = useState<DraftLength>('medium')
+  const [missing, setMissing] = useState<string[]>([])
+  const [flags, setFlags] = useState<string[]>([])
   const [promptId, setPromptId] = useState('')
   const [diagnosisId, setDiagnosisId] = useState('')
   const [gapId, setGapId] = useState('')
@@ -56,14 +69,16 @@ export function DraftsPage() {
   const [editSaving, setEditSaving] = useState(false)
 
   const load = async (id: string) => {
-    const [promptPayload, diagnosisPayload, draftPayload] = await Promise.all([
+    const [promptPayload, diagnosisPayload, draftPayload, assetPayload] = await Promise.all([
       api<{ prompts: Prompt[] }>(`/api/studios/${id}/prompts`),
       api<{ diagnoses: Diagnosis[] }>(`/api/studios/${id}/diagnoses`),
       api<{ drafts: ContentDraft[] }>(`/api/studios/${id}/drafts`),
+      api<{ assets: Asset[] }>(`/api/studios/${id}/assets`),
     ])
     setPrompts(promptPayload.prompts)
     setDiagnoses(diagnosisPayload.diagnoses)
     setDrafts(draftPayload.drafts)
+    setAssets(assetPayload.assets)
   }
 
   useEffect(() => {
@@ -88,10 +103,16 @@ export function DraftsPage() {
     setError('')
     setNotice('')
     try {
-      const result = await api<{ draft: DraftPreview }>(`/api/studios/${studioId}/drafts/generate`, {
+      const result = await api<{ draft: DraftPreview; gaps?: string[]; flags?: string[] }>(`/api/studios/${studioId}/drafts/generate`, {
         method: 'POST',
         body: JSON.stringify({
           channel,
+          contentType,
+          audience,
+          tone,
+          length,
+          brandMention,
+          assetIds,
           promptId: promptId || null,
           diagnosisId: diagnosisId || null,
           gapId: gapId || null,
@@ -102,8 +123,10 @@ export function DraftsPage() {
       setBody(result.draft.body)
       setCites(result.draft.citeSentences.join('\n'))
       setUrlHint(result.draft.urlHint)
+      setMissing(result.gaps ?? [])
+      setFlags(result.flags ?? [])
       setSaved(false)
-      setNotice(result.draft.source === 'deepseek' ? 'DeepSeek 按档案改写了这篇草稿。' : '已按档案和渠道套用模板。请先核对，再复制到你自己的站点。')
+      setNotice(result.draft.source === 'deepseek' ? '模型按品牌资料改写了这篇草稿。' : '已按品牌资料套用模板。请先核对，再复制到你自己的站点。')
     } catch (err) {
       setError(err instanceof Error ? err.message : '生成失败')
     } finally {
@@ -244,21 +267,83 @@ export function DraftsPage() {
         <ErrorBanner message={error} />
         {notice ? <InfoBanner title={notice} /> : null}
         {llm && !llm.enabled ? (
-          <InfoBanner title="当前使用档案模板" description="没有 DeepSeek 密钥时，草稿按渠道套模板。配上密钥后，模型会在同一份事实边界里改写。" />
+          <InfoBanner title="当前使用品牌资料模板" description="没有模型密钥时，草稿按渠道套模板。到「设置」配上密钥后，模型会在同一份事实边界里改写。" />
         ) : null}
         <Section>
           <VStack gap={3}>
-            <Heading level={2}>将使用的档案</Heading>
+            <Heading level={2}>将使用的品牌资料</Heading>
             <ProfileBlock label="能力" items={studio?.capabilities ?? []} />
             <ProfileBlock label="案例" items={studio?.cases ?? []} />
             <ProfileBlock label="目标客户" items={studio?.targetCustomers ?? []} />
             <ProfileBlock label="解决方案" items={studio?.solutions ?? []} />
-            <Button label="到档案里修改" variant="secondary" onClick={() => navigate('/studio')} />
+            <Button label="到品牌里修改" variant="secondary" onClick={() => navigate('/studio')} />
           </VStack>
         </Section>
         <FormLayout direction="vertical">
+          <TextInput label="搜索素材" value={assetQuery} onChange={setAssetQuery} width="100%" />
+          <CheckboxList
+            label="这次用哪些素材"
+            description="可以勾选多条。不可公开的素材不能用来起草。不勾选时，稿子没有客户侧的事实。"
+            value={assetIds}
+            onChange={setAssetIds}
+          >
+            {assets
+              .filter((item) => {
+                const haystack = `${item.title} ${item.body} ${item.tags.join(' ')}`
+                return !assetQuery.trim() || haystack.includes(assetQuery.trim())
+              })
+              .map((item) => (
+                <CheckboxListItem
+                  key={item.id}
+                  value={item.id}
+                  label={`${assetTypeLabel(item.type)} · ${item.title}`}
+                  description={item.publicity === 'private' ? '不可公开，不能用于起草' : item.body.slice(0, 80)}
+                  isDisabled={item.publicity === 'private'}
+                />
+              ))}
+          </CheckboxList>
+          <Button label="去素材库补充" variant="secondary" onClick={() => navigate('/library')} />
+          <Selector
+            label="品牌露出"
+            description="默认不提品牌。从品牌自己的账号发出时，正文不写名字。"
+            value={brandMention}
+            options={[
+              { value: 'none', label: '不提品牌' },
+              { value: 'light', label: '轻度署名' },
+              { value: 'guide', label: '明确引导' },
+            ]}
+            onChange={(value) => {
+              if (value === 'none' || value === 'light' || value === 'guide') setBrandMention(value)
+            }}
+          />
+          <Selector
+            label="内容类型"
+            value={contentType}
+            options={CONTENT_TYPES.map((item) => ({ value: item.id, label: item.label }))}
+            onChange={(value) => {
+              const next = CONTENT_TYPES.find((item) => item.id === value)
+              if (!next) return
+              setContentType(next.id)
+              setChannel(channelForContentType(next.id))
+            }}
+          />
+          <TextInput label="目标读者" description="可空。不填就用品牌资料里的客户画像。" value={audience} onChange={setAudience} width="100%" />
+          <TextInput label="语气" description="可空。不填就用品牌语气。" value={tone} onChange={setTone} width="100%" />
+          <Selector
+            label="长度"
+            value={length}
+            options={[
+              { value: 'short', label: '短' },
+              { value: 'medium', label: '中' },
+              { value: 'long', label: '长' },
+            ]}
+            onChange={(value) => {
+              if (value === 'short' || value === 'medium' || value === 'long') setLength(value)
+            }}
+          />
           <Selector
             label="渠道"
+            description="决定建议落到官网的哪一类页面。内容类型会先带一个默认渠道。"
             value={channel}
             options={DRAFT_CHANNELS.map((item) => ({ value: item.id, label: item.label, description: item.hint }))}
             onChange={(value) => {
@@ -303,6 +388,8 @@ export function DraftsPage() {
           <Section>
             <VStack gap={3}>
               <Heading level={2}>草稿预览</Heading>
+              {missing.length > 0 ? <WarningBanner title="信息不足" description={missing.join(' ')} /> : null}
+              {flags.length > 0 ? <InfoBanner title="已标出空话" description="套话已改成资料里的事实，或换成【待补充】。发布前请补上这些空位。" /> : null}
               <Text color="secondary">
                 {channelLabel(preview.channel)} · {SOURCE_LABEL[preview.source] ?? preview.source}
                 {preview.promptText ? ` · 题目：${preview.promptText}` : ''}
@@ -329,7 +416,7 @@ export function DraftsPage() {
               />
               <TextArea
                 label="建议被引用的句子"
-                description="一行一句。回答引擎适合整句引用，所以每句都带上工作室名称。"
+                description="一行一句。回答引擎适合整句引用，所以每句都带上品牌名称。"
                 value={cites}
                 onChange={(value) => {
                   setCites(value)

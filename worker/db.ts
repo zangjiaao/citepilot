@@ -1,3 +1,5 @@
+import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
+import { blankBrandProfile, readBrandProfile, type BrandProfile } from '../shared/brandProfile.ts'
 import { readStoredCompetitors } from '../shared/competitors.ts'
 import type { DraftEditable } from '../shared/drafts.ts'
 import type { BrandHit, CheckItem, ContentDraft, Cycle, CycleKind, Diagnosis, Observation, Prompt, Sentiment, Studio } from '../shared/types.ts'
@@ -15,6 +17,20 @@ interface StudioRow {
   cases: string
   target_customers: string
   solutions: string
+  introduction: string
+  team_background: string
+  differentiation: string
+  case_studies: string
+  methodology: string
+  pricing: string
+  customer_profile: string
+  customer_pains: string
+  objections: string
+  evidence: string
+  voice: string
+  banned_words: string
+  compliance: string
+  reference_snippets: string
   created_at: string
   updated_at: string
 }
@@ -102,7 +118,7 @@ export async function getStudio(db: D1Database, id: string): Promise<Studio | nu
 
 export async function mustStudio(db: D1Database, id: string): Promise<Studio> {
   const studio = await getStudio(db, id)
-  if (!studio) throw new HttpError(404, '没有找到这个工作室')
+  if (!studio) throw new HttpError(404, '没有找到这个品牌')
   return studio
 }
 
@@ -111,8 +127,11 @@ export async function insertStudio(db: D1Database, studio: Studio): Promise<void
     .prepare(
       `INSERT INTO studios (
          id, name, website, positioning, services, competitors, keywords,
-         capabilities, cases, target_customers, solutions, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         capabilities, cases, target_customers, solutions,
+         introduction, team_background, differentiation, case_studies, methodology, pricing,
+         customer_profile, customer_pains, objections, evidence, voice, banned_words, compliance, reference_snippets,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       studio.id,
@@ -126,6 +145,20 @@ export async function insertStudio(db: D1Database, studio: Studio): Promise<void
       JSON.stringify(studio.cases),
       JSON.stringify(studio.targetCustomers),
       JSON.stringify(studio.solutions),
+      studio.introduction,
+      studio.teamBackground,
+      studio.differentiation,
+      JSON.stringify(studio.caseStudies),
+      studio.methodology,
+      studio.pricing,
+      studio.customerProfile,
+      studio.customerPains,
+      JSON.stringify(studio.objections),
+      studio.evidence,
+      studio.voice,
+      studio.bannedWords,
+      studio.compliance,
+      JSON.stringify(studio.references),
       studio.createdAt,
       studio.updatedAt,
     )
@@ -137,7 +170,10 @@ export async function updateStudio(db: D1Database, studio: Studio): Promise<void
     .prepare(
       `UPDATE studios
        SET name = ?, website = ?, positioning = ?, services = ?, competitors = ?, keywords = ?,
-           capabilities = ?, cases = ?, target_customers = ?, solutions = ?, updated_at = ?
+           capabilities = ?, cases = ?, target_customers = ?, solutions = ?,
+           introduction = ?, team_background = ?, differentiation = ?, case_studies = ?, methodology = ?, pricing = ?,
+           customer_profile = ?, customer_pains = ?, objections = ?, evidence = ?, voice = ?, banned_words = ?, compliance = ?, reference_snippets = ?,
+           updated_at = ?
        WHERE id = ?`,
     )
     .bind(
@@ -151,11 +187,25 @@ export async function updateStudio(db: D1Database, studio: Studio): Promise<void
       JSON.stringify(studio.cases),
       JSON.stringify(studio.targetCustomers),
       JSON.stringify(studio.solutions),
+      studio.introduction,
+      studio.teamBackground,
+      studio.differentiation,
+      JSON.stringify(studio.caseStudies),
+      studio.methodology,
+      studio.pricing,
+      studio.customerProfile,
+      studio.customerPains,
+      JSON.stringify(studio.objections),
+      studio.evidence,
+      studio.voice,
+      studio.bannedWords,
+      studio.compliance,
+      JSON.stringify(studio.references),
       studio.updatedAt,
       studio.id,
     )
     .run()
-  if ((result.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这个工作室')
+  if ((result.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这个品牌')
 }
 
 export async function listPrompts(db: D1Database, studioId: string): Promise<Prompt[]> {
@@ -189,18 +239,25 @@ export async function insertPrompts(db: D1Database, prompts: Prompt[]): Promise<
   )
 }
 
+export async function deleteStudio(db: D1Database, id: string): Promise<void> {
+  const existing = await getStudio(db, id)
+  if (!existing) throw new HttpError(404, '没有找到这个品牌')
+  await db.batch(
+    BRAND_DELETE_ORDER.map((table) => {
+      const sql = table === 'studios' ? 'DELETE FROM studios WHERE id = ?' : `DELETE FROM ${table} WHERE studio_id = ?`
+      return db.prepare(sql).bind(id)
+    }),
+  )
+}
+
 export async function deletePrompt(db: D1Database, studioId: string, promptId: string): Promise<void> {
-  try {
-    const result = await db.prepare('DELETE FROM prompts WHERE id = ? AND studio_id = ?').bind(promptId, studioId).run()
-    if ((result.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这道题')
-  } catch (error) {
-    if (error instanceof HttpError) throw error
-    const message = error instanceof Error ? error.message : String(error)
-    if (/constraint|foreign key/i.test(message)) {
-      throw new HttpError(409, '这道题已经有监测记录，先保留记录。')
-    }
-    throw error
-  }
+  const row = await db
+    .prepare('SELECT COUNT(*) AS total FROM observations WHERE studio_id = ? AND prompt_id = ?')
+    .bind(studioId, promptId)
+    .first<{ total: number }>()
+  if ((row?.total ?? 0) > 0) throw new HttpError(409, '这道题已经有监测记录，先保留记录。')
+  const result = await db.prepare('DELETE FROM prompts WHERE id = ? AND studio_id = ?').bind(promptId, studioId).run()
+  if ((result.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这道题')
 }
 
 export async function listCycles(db: D1Database, studioId: string): Promise<Cycle[]> {
@@ -399,6 +456,7 @@ function mapStudio(row: StudioRow): Studio {
     cases: parseStringArray(row.cases),
     targetCustomers: parseStringArray(row.target_customers),
     solutions: parseStringArray(row.solutions),
+    ...profileFromRow(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -537,4 +595,173 @@ function isCheckItem(value: unknown): value is CheckItem {
     (record.status === 'pass' || record.status === 'warn' || record.status === 'fail') &&
     typeof record.detail === 'string'
   )
+}
+
+function profileFromRow(row: StudioRow): BrandProfile {
+  const parsed = readBrandProfile({
+    introduction: row.introduction,
+    teamBackground: row.team_background,
+    differentiation: row.differentiation,
+    caseStudies: parseJson(row.case_studies),
+    methodology: row.methodology,
+    pricing: row.pricing,
+    customerProfile: row.customer_profile,
+    customerPains: row.customer_pains,
+    objections: parseJson(row.objections),
+    evidence: row.evidence,
+    voice: row.voice,
+    bannedWords: row.banned_words,
+    compliance: row.compliance,
+    references: parseJson(row.reference_snippets),
+  })
+  return parsed.ok ? parsed.profile : blankBrandProfile()
+}
+
+function parseJson(value: string | null | undefined): unknown {
+  if (!value) return []
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return []
+  }
+}
+
+export interface StoredLlmConfig {
+  id: string
+  label: string
+  provider: string
+  baseUrl: string
+  model: string
+  apiKey: string
+  temperature: number | null
+  maxTokens: number | null
+  isDefault: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+interface LlmConfigRow {
+  id: string
+  label: string
+  provider: string
+  base_url: string
+  model: string
+  api_key: string
+  temperature: number | null
+  max_tokens: number | null
+  is_default: number
+  created_at: string
+  updated_at: string
+}
+
+export interface StoredLlmSettings {
+  generateConfigId: string
+  analyzeConfigId: string
+}
+
+export async function listLlmConfigs(db: D1Database): Promise<StoredLlmConfig[]> {
+  const { results } = await db.prepare('SELECT * FROM llm_configs ORDER BY created_at ASC').all<LlmConfigRow>()
+  return results.map(mapLlmConfig)
+}
+
+export async function getLlmConfig(db: D1Database, id: string): Promise<StoredLlmConfig | null> {
+  const row = await db.prepare('SELECT * FROM llm_configs WHERE id = ?').bind(id).first<LlmConfigRow>()
+  return row ? mapLlmConfig(row) : null
+}
+
+export async function insertLlmConfig(db: D1Database, config: StoredLlmConfig): Promise<void> {
+  const statements = []
+  if (config.isDefault) statements.push(db.prepare('UPDATE llm_configs SET is_default = 0'))
+  statements.push(
+    db
+      .prepare(
+        `INSERT INTO llm_configs (
+           id, label, provider, base_url, model, api_key, temperature, max_tokens, is_default, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        config.id,
+        config.label,
+        config.provider,
+        config.baseUrl,
+        config.model,
+        config.apiKey,
+        config.temperature,
+        config.maxTokens,
+        config.isDefault ? 1 : 0,
+        config.createdAt,
+        config.updatedAt,
+      ),
+  )
+  await db.batch(statements)
+}
+
+export async function updateLlmConfig(db: D1Database, config: StoredLlmConfig): Promise<void> {
+  const statements = []
+  if (config.isDefault) statements.push(db.prepare('UPDATE llm_configs SET is_default = 0 WHERE id != ?').bind(config.id))
+  statements.push(
+    db
+      .prepare(
+        `UPDATE llm_configs
+         SET label = ?, provider = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, max_tokens = ?, is_default = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .bind(
+        config.label,
+        config.provider,
+        config.baseUrl,
+        config.model,
+        config.apiKey,
+        config.temperature,
+        config.maxTokens,
+        config.isDefault ? 1 : 0,
+        config.updatedAt,
+        config.id,
+      ),
+  )
+  const results = await db.batch(statements)
+  const updated = results[results.length - 1]
+  if ((updated?.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这个模型配置')
+}
+
+export async function deleteLlmConfig(db: D1Database, id: string): Promise<void> {
+  const result = await db.prepare('DELETE FROM llm_configs WHERE id = ?').bind(id).run()
+  if ((result.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这个模型配置')
+}
+
+export async function getLlmSettings(db: D1Database): Promise<StoredLlmSettings> {
+  const row = await db
+    .prepare('SELECT generate_config_id, analyze_config_id FROM llm_settings WHERE id = ?')
+    .bind('app')
+    .first<{ generate_config_id: string | null; analyze_config_id: string | null }>()
+  return {
+    generateConfigId: row?.generate_config_id ?? '',
+    analyzeConfigId: row?.analyze_config_id ?? '',
+  }
+}
+
+export async function saveLlmSettings(db: D1Database, settings: StoredLlmSettings): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO llm_settings (id, generate_config_id, analyze_config_id) VALUES ('app', ?, ?)
+       ON CONFLICT(id) DO UPDATE SET generate_config_id = excluded.generate_config_id, analyze_config_id = excluded.analyze_config_id`,
+    )
+    .bind(settings.generateConfigId || null, settings.analyzeConfigId || null)
+    .run()
+}
+
+function mapLlmConfig(row: LlmConfigRow): StoredLlmConfig {
+  return {
+    id: row.id,
+    label: row.label,
+    provider: row.provider,
+    baseUrl: row.base_url,
+    model: row.model,
+    apiKey: row.api_key,
+    temperature: row.temperature,
+    maxTokens: row.max_tokens,
+    isDefault: row.is_default === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
 }

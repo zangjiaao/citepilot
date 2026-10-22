@@ -97,8 +97,8 @@ async function main() {
   })
   const preview = generatedDraft.draft
   if (preview?.channel !== 'product-promo') throw new Error('draft channel missing')
-  if (!preview.title || !preview.body?.includes(studio.name) || (preview.citeSentences?.length ?? 0) < 2) {
-    throw new Error('draft generate returned an empty product promo')
+  if (!preview.title || !preview.body || preview.body.includes(studio.name) || (preview.citeSentences?.length ?? 0) < 2) {
+    throw new Error('draft generate should omit the brand by default and still return cite sentences')
   }
   if (!String(preview.urlHint).includes('example.com')) throw new Error('draft url hint missing site')
   if (!health.llm.enabled && preview.source !== 'template') throw new Error(`expected template draft, got ${preview.source}`)

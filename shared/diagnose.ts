@@ -129,7 +129,7 @@ export function suggestionsFrom(checklist: CheckItem[]): string[] {
   push('https', '把官网切到 HTTPS，并让诊断地址最终落到 https。')
   push('status', '先保证这个 URL 返回 200，再谈被引用。')
   push('noindex', '去掉 noindex，否则回答引擎不该引用这一页。')
-  push('title', '把 title 写成 15 到 40 个字，包含工作室名称和核心服务，而不是只有品牌词。')
+  push('title', '把 title 写成 15 到 40 个字，包含品牌名称和核心服务，而不是只有品牌词。')
   push('description', '补一段 50 到 140 字的 meta description，写清为谁解决什么问题。')
   push('h1', '页面只保留一个 H1，用一句人话说明你是做什么的。')
   push('content', '公开页补上服务边界、交付物和一两个可核对的案例，避免只有口号。')

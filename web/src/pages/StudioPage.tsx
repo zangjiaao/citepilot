@@ -1,16 +1,20 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Button } from '@astryxdesign/core/Button'
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { FormLayout } from '@astryxdesign/core/FormLayout'
 import { Link } from '@astryxdesign/core/Link'
 import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { VStack } from '@astryxdesign/core/VStack'
+import { blankBrandProfile, type BrandProfile } from '../../../shared/brandProfile.ts'
 import type { Competitor, Studio } from '../../../shared/types.ts'
 import { ApiError, api } from '../api'
 import { joinLines, splitLines, splitList } from '../format'
 import { useStudio } from '../studio'
 import { ErrorBanner, PageFrame } from '../ui'
+import { ObjectionEditor, ProfileTextAreas } from './BrandProfileFields'
 
 interface CompetitorDraft {
   id: string
@@ -19,7 +23,7 @@ interface CompetitorDraft {
   domain: string
 }
 
-interface Draft {
+interface Draft extends BrandProfile {
   name: string
   website: string
   positioning: string
@@ -43,22 +47,27 @@ const emptyDraft: Draft = {
   cases: '',
   targetCustomers: '',
   solutions: '',
+  ...blankBrandProfile(),
 }
 
 export function StudioPage() {
-  const { studio, refresh } = useStudio()
+  const navigate = useNavigate()
+  const { studio, studios, setStudioId, refresh } = useStudio()
   const [draft, setDraft] = useState<Draft>(emptyDraft)
   const [creating, setCreating] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof Draft, string>>>({})
   const [saving, setSaving] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmName, setConfirmName] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     if (studio && !creating) setDraft(fromStudio(studio))
   }, [studio, creating])
 
-  const update = (key: Exclude<keyof Draft, 'competitors'>) => (value: string) => {
+  const update = (key: TextKey) => (value: string) => {
     setDraft((current) => ({ ...current, [key]: value }))
     setFieldErrors((current) => clearField(current, key))
   }
@@ -95,15 +104,30 @@ export function StudioPage() {
       cases: splitLines(draft.cases),
       targetCustomers: splitLines(draft.targetCustomers),
       solutions: splitLines(draft.solutions),
+      introduction: draft.introduction,
+      teamBackground: draft.teamBackground,
+      differentiation: draft.differentiation,
+      caseStudies: draft.caseStudies,
+      methodology: draft.methodology,
+      pricing: draft.pricing,
+      customerProfile: draft.customerProfile,
+      customerPains: draft.customerPains,
+      objections: draft.objections,
+      evidence: draft.evidence,
+      voice: draft.voice,
+      bannedWords: draft.bannedWords,
+      compliance: draft.compliance,
+      references: draft.references,
     }
     try {
       if (creating || !studio) {
-        await api('/api/studios', { method: 'POST', body: JSON.stringify(payload) })
+        const created = await api<{ studio: Studio }>('/api/studios', { method: 'POST', body: JSON.stringify(payload) })
+        setStudioId(created.studio.id)
         setCreating(false)
-        setMessage('已新建工作室，并准备了今天的抽查批次。')
+        setMessage('已新建品牌，并准备了今天的抽查批次。')
       } else {
         await api(`/api/studios/${studio.id}`, { method: 'PUT', body: JSON.stringify(payload) })
-        setMessage('档案已保存。之后生成的题目和监测解析都会用这份资料。')
+        setMessage('品牌已保存。之后生成的题目和监测解析都会用这份资料。')
       }
       await refresh()
     } catch (err) {
@@ -116,13 +140,34 @@ export function StudioPage() {
     }
   }
 
+  const removeBrand = async () => {
+    if (!studio || confirmName.trim() !== studio.name) return
+    setDeleting(true)
+    setError('')
+    try {
+      const next = studios.find((item) => item.id !== studio.id)?.id ?? ''
+      await api(`/api/studios/${studio.id}`, { method: 'DELETE', body: JSON.stringify({ confirmName: confirmName.trim() }) })
+      setStudioId(next)
+      setCreating(false)
+      setConfirmOpen(false)
+      setConfirmName('')
+      await refresh()
+      navigate('/studio')
+      setMessage(next ? '已删除这个品牌。' : '已删除。可以新建一个品牌。')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <PageFrame
-      title="工作室档案"
-      description="名称、官网、定位、服务、竞品和关键词会用来出题，也会用来判断回答里有没有提到你。竞品可以写别名和域名。能力、案例、目标客户和解决方案会用来起草可引用的内容。"
+      title="品牌"
+      description="名称、官网、定位、服务、竞品和关键词会用来出题，也会用来判断回答里有没有提到你。下面的长文、案例和资料库会交给内容起草，句子里的逗号会保留。"
       actions={
         <Button
-          label="新建工作室"
+          label="新建品牌"
           variant="secondary"
           onClick={() => {
             setCreating(true)
@@ -239,14 +284,33 @@ export function StudioPage() {
             statusVariant="detached"
             status={fieldStatus(fieldErrors.solutions)}
           />
+          <ProfileTextAreas
+            values={draft}
+            onChange={(key, value) => update(key as TextKey)(value)}
+            status={(key) => fieldStatus(fieldErrors[key as keyof Draft])}
+          />
+          <Button label="打开素材库" variant="secondary" onClick={() => navigate('/library')} />
+          <Text color="secondary">案例、产品、巧思、交互、数据成效、客户评价和参考资料都写在素材库里。这里只留品牌语气和红线。</Text>
+          <ObjectionEditor items={draft.objections} onChange={(objections) => setDraft((current) => ({ ...current, objections }))} />
         </FormLayout>
-        <Button label={creating || !studio ? '创建' : '保存档案'} variant="primary" type="submit" isLoading={saving} />
+        <Button label={creating || !studio ? '创建' : '保存品牌'} variant="primary" type="submit" isLoading={saving} />
+        {studio && !creating ? (
+          <Button label="删除品牌" variant="destructive" onClick={() => { setConfirmName(''); setConfirmOpen(true) }} />
+        ) : null}
         {studio && !creating ? (
           <Link href={studio.website} isExternalLink isStandalone newTabLabel="（在新标签页打开）">
             打开当前官网
           </Link>
         ) : null}
       </VStack>
+      <Dialog isOpen={confirmOpen} onOpenChange={setConfirmOpen} purpose="form" width={480}>
+        <VStack gap={3}>
+          <DialogHeader title="删除品牌" subtitle="题目、批次、样本、诊断、草稿和素材库会一起删除，不能恢复。" onOpenChange={setConfirmOpen} />
+          <Text>请输入「{studio?.name ?? ''}」以确认。</Text>
+          <TextInput label="品牌名称" value={confirmName} onChange={setConfirmName} width="100%" />
+          <Button label="确认删除" variant="destructive" onClick={() => void removeBrand()} isLoading={deleting} isDisabled={!studio || confirmName.trim() !== studio.name} />
+        </VStack>
+      </Dialog>
     </PageFrame>
   )
 }
@@ -263,6 +327,20 @@ function fromStudio(studio: Studio): Draft {
     cases: joinLines(studio.cases),
     targetCustomers: joinLines(studio.targetCustomers),
     solutions: joinLines(studio.solutions),
+    introduction: studio.introduction,
+    teamBackground: studio.teamBackground,
+    differentiation: studio.differentiation,
+    caseStudies: studio.caseStudies,
+    methodology: studio.methodology,
+    pricing: studio.pricing,
+    customerProfile: studio.customerProfile,
+    customerPains: studio.customerPains,
+    objections: studio.objections,
+    evidence: studio.evidence,
+    voice: studio.voice,
+    bannedWords: studio.bannedWords,
+    compliance: studio.compliance,
+    references: studio.references,
   }
 }
 
@@ -290,7 +368,25 @@ const DRAFT_FIELDS = new Set<keyof Draft>([
   'cases',
   'targetCustomers',
   'solutions',
+  'introduction',
+  'teamBackground',
+  'differentiation',
+  'caseStudies',
+  'methodology',
+  'pricing',
+  'customerProfile',
+  'customerPains',
+  'objections',
+  'evidence',
+  'voice',
+  'bannedWords',
+  'compliance',
+  'references',
 ])
+
+type TextKey = {
+  [K in keyof Draft]: Draft[K] extends string ? K : never
+}[keyof Draft]
 
 function isDraftField(value: string): value is keyof Draft {
   return DRAFT_FIELDS.has(value as keyof Draft)

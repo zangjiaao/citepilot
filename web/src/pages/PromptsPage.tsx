@@ -56,7 +56,7 @@ export function PromptsPage() {
       method: 'POST',
       body: JSON.stringify({}),
     })
-    setNotice(result.warning || (result.source === 'llm' ? 'DeepSeek 写了新题。' : '已按档案套用模板题。'))
+    setNotice(result.warning || (result.source === 'llm' ? '模型写了新题。' : '已按品牌资料套用模板题。'))
     await load(studioId)
   }
 

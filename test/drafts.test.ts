@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { acceptDraft, copyDraftTitle, DRAFT_CHANNELS, formatDraftForCopy, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
+import { blankBrandProfile } from '../shared/brandProfile.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -14,6 +15,7 @@ const studio: Studio = {
   cases: ['制造企业设备故障问答：把维修手册整理成可引用的知识库'],
   targetCustomers: ['第一次把大模型做成业务系统的中大型企业'],
   solutions: ['企业知识库 RAG：文档、权限、引用和回归题'],
+  ...blankBrandProfile(),
   createdAt: '',
   updatedAt: '',
 }

@@ -1,45 +1,70 @@
 import { asStringArray, extractJson } from '../shared/json.ts'
+import type { LlmCallConfig } from '../shared/llmProviders.ts'
 import { brandAliases } from '../shared/parseAnswer.ts'
 import { isCluster, normalizeQuestion } from '../shared/prompts.ts'
 import type { GeneratedPrompt, Studio } from '../shared/types.ts'
-import type { AppBindings } from './env.ts'
-import { llmConfig } from './env.ts'
 
-export async function deepseekJson(env: AppBindings, system: string, user: string, temperature: number): Promise<unknown> {
-  const config = llmConfig(env)
-  if (!config.enabled) throw new Error('未配置 DeepSeek API key')
+export async function completeJson(config: LlmCallConfig, system: string, user: string, fallbackTemperature: number): Promise<unknown> {
+  if (!config.apiKey) throw new Error('还没有配置模型密钥')
+  const temperature = config.temperature ?? fallbackTemperature
+  const body: Record<string, unknown> = {
+    model: config.model,
+    temperature,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+  }
+  if (config.maxTokens) body.max_tokens = config.maxTokens
   let response: Response
   try {
-    response = await fetch(config.completionsUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model,
-        temperature,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        response_format: { type: 'json_object' },
-      }),
-      signal: AbortSignal.timeout(25_000),
-    })
+    response = await postChat(config, { ...body, response_format: { type: 'json_object' } })
+    if (response.status === 400) response = await postChat(config, body)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error(JSON.stringify({ message: 'deepseek request failed', error: message }))
-    throw new Error('DeepSeek 请求没有完成')
+    console.error(JSON.stringify({ message: 'llm request failed', error: message }))
+    throw new Error('模型请求没有完成')
   }
   if (!response.ok) {
-    console.error(JSON.stringify({ message: 'deepseek status', status: response.status }))
-    throw new Error(`DeepSeek 返回 HTTP ${response.status}`)
+    console.error(JSON.stringify({ message: 'llm status', status: response.status, model: config.model }))
+    throw new Error(`模型返回 HTTP ${response.status}`)
   }
   const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }
   const content = payload.choices?.[0]?.message?.content
-  if (!content) throw new Error('DeepSeek 没有返回内容')
+  if (!content) throw new Error('模型没有返回内容')
   return extractJson(content)
+}
+
+export async function testLlmConnection(config: LlmCallConfig): Promise<{ ok: true; reply: string } | { ok: false; error: string }> {
+  try {
+    const response = await postChat(config, {
+      model: config.model,
+      temperature: 0,
+      max_tokens: 16,
+      messages: [{ role: 'user', content: '只回复一个字：好' }],
+    })
+    if (!response.ok) return { ok: false, error: `模型返回 HTTP ${response.status}` }
+    const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    const reply = payload.choices?.[0]?.message?.content?.trim() ?? ''
+    if (!reply) return { ok: false, error: '模型没有返回内容' }
+    return { ok: true, reply: reply.slice(0, 80) }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(JSON.stringify({ message: 'llm test failed', error: message }))
+    return { ok: false, error: '模型请求没有完成' }
+  }
+}
+
+async function postChat(config: LlmCallConfig, body: unknown): Promise<Response> {
+  return fetch(config.completionsUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(25_000),
+  })
 }
 
 export function acceptGeneratedPrompts(studio: Studio, existing: string[], raw: unknown): GeneratedPrompt[] {

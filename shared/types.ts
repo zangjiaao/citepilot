@@ -1,3 +1,7 @@
+import type { BrandProfile } from './brandProfile.ts'
+
+export type { BrandProfile, CaseStudy, Objection, ReferenceSnippet } from './brandProfile.ts'
+
 export type Cluster = 'brand' | 'category' | 'comparison' | 'scenario'
 export type CycleKind = 'baseline' | 'retest' | 'custom'
 export type Sentiment = 'positive' | 'neutral' | 'negative' | 'mixed'
@@ -22,7 +26,7 @@ export interface BrandHit {
   cited: boolean
 }
 
-export interface Studio {
+export interface Studio extends BrandProfile {
   id: string
   name: string
   website: string

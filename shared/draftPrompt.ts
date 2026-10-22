@@ -1,0 +1,247 @@
+import { allowedNumbers, assetBlock, assetTypeLabel, draftFromAssets, type Asset, type BrandMention } from './assets.ts'
+import type { DraftBrief, DraftChannel, Studio } from './types.ts'
+
+export type { BrandMention } from './assets.ts'
+
+export const NO_FABRICATION_RULE =
+  '只能使用勾选的素材里已经写出的事实。品牌资料只作语气和红线。不要编造客户名、界面、数字、奖项或团队规模。没有的数字写成【待补充：客户授权的前后数据】。'
+
+export const SHOW_DONT_TELL_RULE =
+  '写客户的效率变化和已经发生的结果，不要写我们有多强。先给具体问题、前后数据或一处交互，不要先介绍公司。不要用获奖、人数、行业领先、头部、顶级。'
+
+export const CONTENT_TYPES = [
+  { id: 'case-breakdown', label: '案例拆解' },
+  { id: 'interaction', label: '交互/设计细节分享' },
+  { id: 'build-log', label: '开发过程/build in public' },
+  { id: 'retro', label: '踩坑复盘' },
+  { id: 'thread', label: 'X/推特 thread' },
+  { id: 'short-post', label: '即刻/小红书短帖' },
+  { id: 'zhihu', label: '知乎回答' },
+  { id: 'wechat', label: '公众号长文' },
+  { id: 'faq', label: 'FAQ' },
+] as const
+
+export type ContentType = (typeof CONTENT_TYPES)[number]['id']
+export type DraftLength = 'short' | 'medium' | 'long'
+
+export interface DraftRequestOptions {
+  audience: string
+  contentType: ContentType
+  tone: string
+  length: DraftLength
+  allowBragging: boolean
+  brandMention: BrandMention
+}
+
+const CONTENT_IDS = new Set<string>(CONTENT_TYPES.map((item) => item.id))
+const LENGTHS = new Set<string>(['short', 'medium', 'long'])
+
+const GENERIC =
+  /赋能|抓手|闭环|颗粒度|一站式|全方位|极致|我们致力于|专业的团队|专业团队|丰富的经验|丰富经验|优质的服务|优质服务|数字化转型|无缝|降本增效/
+
+const BRAG =
+  /行业领先|业内领先|获奖|荣获|荣誉|头部|顶级|最强|第一品牌|百人团队|数百人|团队规模|国家级|独角兽|行业标杆|遥遥领先|秀肌肉|领军|权威/
+
+export function isContentType(value: string): value is ContentType {
+  return CONTENT_IDS.has(value)
+}
+
+export function contentTypeLabel(id: string): string {
+  return CONTENT_TYPES.find((item) => item.id === id)?.label ?? id
+}
+
+export function channelForContentType(type: ContentType): DraftChannel {
+  switch (type) {
+    case 'faq':
+      return 'faq'
+    case 'wechat':
+    case 'build-log':
+    case 'retro':
+      return 'wechat'
+    case 'zhihu':
+      return 'linkedin'
+    case 'thread':
+      return 'social-short'
+    case 'short-post':
+      return 'xiaohongshu'
+    case 'case-breakdown':
+    case 'interaction':
+      return 'site-article'
+  }
+}
+
+export function contentTypeForChannel(channel: DraftChannel): ContentType {
+  switch (channel) {
+    case 'faq':
+      return 'faq'
+    case 'wechat':
+      return 'wechat'
+    case 'xiaohongshu':
+    case 'social-short':
+      return 'short-post'
+    case 'linkedin':
+      return 'zhihu'
+    case 'product-promo':
+    case 'site-article':
+      return 'case-breakdown'
+  }
+}
+
+export function parseDraftOptions(input: unknown, channel: DraftChannel): DraftRequestOptions {
+  const record = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
+  const requested = typeof record.contentType === 'string' ? record.contentType.trim() : ''
+  const contentType = isContentType(requested) ? requested : contentTypeForChannel(channel)
+  const lengthRaw = typeof record.length === 'string' ? record.length.trim() : ''
+  const length: DraftLength = LENGTHS.has(lengthRaw) ? (lengthRaw as DraftLength) : 'medium'
+  const audience = typeof record.audience === 'string' ? record.audience.trim().slice(0, 200) : ''
+  const tone = typeof record.tone === 'string' ? record.tone.trim().slice(0, 200) : ''
+  const mention = record.brandMention
+  const brandMention: BrandMention = mention === 'light' || mention === 'guide' || mention === 'none' ? mention : 'none'
+  return { audience, contentType, tone, length, allowBragging: record.allowBragging === true, brandMention }
+}
+
+export function parseAssetIds(value: unknown): { ok: true; ids: string[] } | { ok: false; error: string } {
+  if (value === undefined || value === null) return { ok: true, ids: [] }
+  if (!Array.isArray(value)) return { ok: false, error: '素材选择格式不正确' }
+  const ids = value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
+  if (ids.length > 12) return { ok: false, error: '一次最多勾选 12 条素材' }
+  if (ids.some((item) => !/^[\w-]{1,80}$/.test(item))) return { ok: false, error: '有一条素材编号不正确' }
+  return { ok: true, ids: [...new Set(ids)] }
+}
+
+export function profileGaps(_studio: Studio, options: DraftRequestOptions, assets: Asset[]): string[] {
+  const gaps: string[] = []
+  if (assets.length === 0) gaps.push('先从素材库勾选一条或多条。不勾选时，稿子没有客户侧的事实')
+  const metrics = assets.flatMap((item) => item.details.metrics.filter((metric) => metric.customerAuthorized && (metric.before || metric.after)))
+  if (assets.length > 0 && metrics.length === 0 && (options.contentType === 'case-breakdown' || options.contentType === 'wechat')) {
+    gaps.push('数据成效：补一组客户授权公开的前后数字，例如耗时、成本、准确率或吞吐')
+  }
+  if (assets.some((item) => item.type === 'testimonial' && item.details.quote.trim() && !item.details.quoteAuthorized)) {
+    gaps.push('客户评价还没有授权公开，稿子里不会引用原话')
+  }
+  if (assets.some((item) => item.publicity === 'anonymous')) gaps.push('有匿名素材：不要写出能认出客户的信息')
+  if (assets.some((item) => item.details.metrics.some((metric) => !metric.customerAuthorized && (metric.before || metric.after)))) {
+    gaps.push('有未授权的指标，那些数字不会写进稿子')
+  }
+  return gaps.slice(0, 6)
+}
+
+export function assembleDraftPrompt(
+  studio: Studio,
+  options: DraftRequestOptions,
+  extra: { promptText?: string; gapLabel?: string; gapDetail?: string; channelLabel: string },
+  assets: Asset[],
+): { system: string; user: string } {
+  const lengthHint =
+    options.contentType === 'thread'
+      ? '5 到 8 条短句，每条一行'
+      : options.contentType === 'short-post'
+        ? '300 字以内'
+        : options.length === 'short'
+          ? '400 到 700 字'
+          : options.length === 'long'
+            ? '1800 到 2800 字'
+            : '900 到 1400 字'
+  const mentionRule =
+    options.brandMention === 'none'
+      ? '品牌露出：不提品牌。正文和可引用句都不要出现品牌名，这篇会从品牌自己的账号发出。'
+      : options.brandMention === 'light'
+        ? '品牌露出：轻度署名。正文讲客户的变化，品牌名只在最后一行出现一次。'
+        : '品牌露出：明确引导。正文仍以客户结果为主，结尾写出品牌名、官网和下一步。'
+  const system = [
+    '你在把几条素材合成一篇可以分享的内容。先选一个钩子，再按渠道安排结构，不要逐条复述素材库。',
+    SHOW_DONT_TELL_RULE,
+    NO_FABRICATION_RULE,
+    mentionRule,
+    options.allowBragging ? '用户允许提到素材里已经写明的奖项或规模，仍然不能编造。' : '不要写奖项、人数、融资或行业领先。',
+    '数字只能来自已授权的指标，或素材正文里已经出现的数字。',
+    '只输出 JSON：{"title":"","body":"","citeSentences":["",""],"urlHint":""}。',
+    options.brandMention === 'none'
+      ? 'citeSentences 不要出现品牌名。urlHint 必须包含给定官网主机名。'
+      : 'citeSentences 是 2 到 4 句可引用的话，每句带上品牌名。urlHint 必须包含给定官网主机名。',
+  ].join('')
+  const user = [
+    `内容类型：${contentTypeLabel(options.contentType)}`,
+    `发布渠道：${extra.channelLabel}`,
+    `目标读者：${options.audience || studio.customerProfile || studio.targetCustomers[0] || '做类似事情的同行'}`,
+    `语气：${options.tone || studio.voice || '像在讲客户那边发生的变化'}`,
+    `长度：${lengthHint}`,
+    assets.length > 0 ? assets.map((item, index) => `素材 ${index + 1}\n${assetBlock(item)}`).join('\n\n') : '素材：没有勾选。不要用品牌介绍硬写。',
+    `品牌资料只作背景。定位：${studio.positioning || '未填'}`,
+    `禁用词：${studio.bannedWords || '无'}`,
+    `不能说的内容：${studio.compliance || '不要承诺素材里没有的效果'}`,
+    `题目：${extra.promptText || '无'}`,
+    `诊断缺口：${extra.gapLabel || '无'} ${extra.gapDetail || ''}`.trim(),
+  ].join('\n')
+  return { system, user }
+}
+
+export function rewriteGenericSentences(body: string, assets: Asset[], allowBragging: boolean): { body: string; flags: string[] } {
+  const allowed = allowedNumbers(assets)
+  const flags: string[] = []
+  const parts = body.split(/(?<=[。！？\n])/)
+  let usedFact = false
+  const next = parts.map((part) => {
+    const sentence = part.trim()
+    if (!sentence || sentence.includes('【待补充')) return part
+    const brag = !allowBragging && BRAG.test(sentence)
+    const generic = GENERIC.test(sentence)
+    const stray = [...(sentence.match(/\d+(?:\.\d+)?/g) ?? [])].some((item) => !allowed.has(item))
+    if (!brag && !generic && !stray) return part
+    flags.push(sentence.replace(/\s+/g, ' ').slice(0, 80))
+    if (!usedFact) {
+      const fact = assets.flatMap((item) => item.details.metrics.filter((metric) => metric.customerAuthorized))[0]
+      if (fact) {
+        usedFact = true
+        return part.replace(sentence, `客户的${fact.name}从 ${fact.before}${fact.unit} 变成 ${fact.after}${fact.unit}。`)
+      }
+    }
+    return part.replace(sentence, stray ? '【待补充：客户授权公开的前后数据】' : '【待补充：把这句自夸换成客户侧的问题或变化】')
+  })
+  return { body: next.join(''), flags }
+}
+
+export function applyBrandMention(brief: DraftBrief, brand: string, website: string, mention: BrandMention): DraftBrief {
+  if (mention === 'light') {
+    return { ...brief, body: brief.body.includes(brand) ? brief.body : `${brief.body.trim()}\n\n${brand}` }
+  }
+  if (mention === 'guide') {
+    const line = `想看具体做法，可以从 ${brand} 的公开说明开始：${website}`
+    return { ...brief, body: brief.body.includes(brand) ? brief.body : `${brief.body.trim()}\n\n${line}` }
+  }
+  const body = stripBrand(brief.body, brand)
+  const citeSentences = brief.citeSentences.map((item) => stripBrand(item, brand)).filter((item) => item.length >= 12)
+  const padded = citeSentences.length >= 2 ? citeSentences : [...citeSentences, ...body.split('\n').map((item) => item.trim()).filter((item) => item.length >= 12)]
+  return {
+    ...brief,
+    title: clipTitle(stripBrand(brief.title, brand) || '客户侧的一处变化'),
+    body,
+    citeSentences: padded.slice(0, 5),
+  }
+}
+
+export function materialDraft(studio: Studio, assets: Asset[], channelPath: string, mention: BrandMention): DraftBrief {
+  return applyBrandMention(draftFromAssets(studio, assets, channelPath, mention), studio.name, studio.website, mention)
+}
+
+function stripBrand(text: string, brand: string): string {
+  if (!brand) return text.trim()
+  return text
+    .split(`${brand}：`).join('')
+    .split(`${brand}的`).join('')
+    .split(brand).join('')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^[：:\s]+/gm, '')
+    .trim()
+}
+
+function clipTitle(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed.length >= 4) return trimmed.slice(0, 80)
+  return '客户侧的一处变化'
+}
+
+export function assetTypeNames(assets: Asset[]): string {
+  return assets.map((item) => assetTypeLabel(item.type)).join('、')
+}

@@ -6,9 +6,9 @@ export function normalizeQuestion(text: string): string {
 }
 
 export function templatePrompts(studio: Pick<Studio, 'name' | 'services' | 'competitors' | 'keywords'>, existing: string[]): GeneratedPrompt[] {
-  const name = studio.name.trim() || '这家工作室'
+  const name = studio.name.trim() || '这个品牌'
   const names = competitorNames(studio.competitors)
-  const competitor = names[0] || '同类工作室'
+  const competitor = names[0] || '同类服务商'
   const competitor2 = names[1] || competitor
   const keyword = studio.keywords[0]?.trim() || '企业智能体'
   const keyword2 = studio.keywords[1]?.trim() || keyword
@@ -22,7 +22,7 @@ export function templatePrompts(studio: Pick<Studio, 'name' | 'services' | 'comp
     { cluster: 'category', text: `${service}通常包含哪些交付物？`, rationale: '服务定义：回答是否复述你的交付边界' },
     { cluster: 'comparison', text: `${name}和${competitor}做${keyword}，差别在哪里？`, rationale: '对比题：品牌和竞品是否被同时点名' },
     { cluster: 'comparison', text: `选${name}还是${competitor2}，更适合第一次落地${keyword2}？`, rationale: '对比决策：是否给出偏向和理由' },
-    { cluster: 'scenario', text: `团队想做「${service}」，第一步应该问服务商什么？`, rationale: '场景题：工作室会不会出现在实施建议里' },
+    { cluster: 'scenario', text: `团队想做「${service}」，第一步应该问服务商什么？`, rationale: '场景题：品牌会不会出现在实施建议里' },
     { cluster: 'scenario', text: `已经有内部知识库，还要不要找${name}这类团队做${keyword}？`, rationale: '场景取舍：自建和外购时品牌是否被提到' },
   ]
   const seen = new Set(existing.map(normalizeQuestion))
