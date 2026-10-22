@@ -14,6 +14,13 @@ export function sampleFraction(hits: number, total: number): string {
   return `${hits}/${total}`
 }
 
+export function splitLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 export function splitList(value: string): string[] {
   return value
     .split(/\n|，|,/)

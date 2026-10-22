@@ -7,6 +7,7 @@ import { acceptDraft, channelLabel, copyDraftTitle, isDraftChannel, parseDraftEd
 import { parseAnswer, summarize } from '../shared/parseAnswer.ts'
 import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.ts'
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
+import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
 import { assertPublicHttpUrl } from '../shared/ssrf.ts'
 import type { Cluster, ContentDraft, Cycle, CycleTrendPoint, Diagnosis, DraftPreview, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
 import {
@@ -42,7 +43,7 @@ export const app = new Hono<{ Bindings: AppBindings }>()
 app.onError((error, c) => {
   if (error instanceof HttpError) {
     const status = error.status === 404 || error.status === 409 || error.status === 422 || error.status === 503 ? error.status : 400
-    return c.json({ error: error.message }, status)
+    return c.json(error.field ? { error: error.message, field: error.field } : { error: error.message }, status)
   }
   const message = error instanceof Error ? error.message : String(error)
   if (/no such table|no such column/i.test(message)) {
@@ -642,32 +643,38 @@ function studioFromBody(body: unknown): Omit<Studio, 'id' | 'createdAt' | 'updat
   const name = stringField(record, 'name').trim()
   const website = stringField(record, 'website').trim()
   const positioning = stringField(record, 'positioning').trim()
-  if (name.length < 2 || name.length > 80) throw new HttpError(400, '工作室名称需要 2 到 80 个字')
-  if (positioning.length < 10 || positioning.length > 2000) throw new HttpError(400, '定位需要 10 到 2000 个字')
+  if (name.length < 2 || name.length > 80) throw new HttpError(400, '工作室名称需要 2 到 80 个字', 'name')
+  if (positioning.length < 10 || positioning.length > 2000) throw new HttpError(400, `定位有 ${positioning.length} 字，需要 10 到 2000 个字`, 'positioning')
   let parsed: URL
   try {
     parsed = assertPublicHttpUrl(website)
   } catch (error) {
-    throw new HttpError(400, error instanceof Error ? error.message : '官网地址不正确')
+    throw new HttpError(400, error instanceof Error ? error.message : '官网地址不正确', 'website')
   }
   return {
     name,
     website: parsed.toString(),
     positioning,
-    services: stringList(record.services, 20, 80),
+    services: studioList(record.services, 'services'),
     competitors: competitorField(record.competitors),
-    keywords: stringList(record.keywords, 20, 40),
-    capabilities: optionalStringList(record.capabilities, 12, 120),
-    cases: optionalStringList(record.cases, 8, 200),
-    targetCustomers: optionalStringList(record.targetCustomers, 12, 80),
-    solutions: optionalStringList(record.solutions, 12, 120),
+    keywords: studioList(record.keywords, 'keywords'),
+    capabilities: studioList(record.capabilities ?? [], 'capabilities'),
+    cases: studioList(record.cases ?? [], 'cases'),
+    targetCustomers: studioList(record.targetCustomers ?? [], 'targetCustomers'),
+    solutions: studioList(record.solutions ?? [], 'solutions'),
   }
 }
 
 function competitorField(value: unknown): Studio['competitors'] {
   const parsed = parseCompetitorList(value)
-  if (!parsed.ok) throw new HttpError(400, parsed.error)
+  if (!parsed.ok) throw new HttpError(400, parsed.error, 'competitors')
   return parsed.competitors
+}
+
+function studioList(value: unknown, field: StudioListField): string[] {
+  const parsed = readStudioList(value, field)
+  if (!parsed.ok) throw new HttpError(400, parsed.error, parsed.field)
+  return parsed.items
 }
 
 function metricScope(studio: Studio): MetricScope {
@@ -689,23 +696,10 @@ function hydrateObservations(observations: Observation[], studio: Studio): Obser
   })
 }
 
-function optionalStringList(value: unknown, maxItems: number, maxLength: number): string[] {
-  if (value === undefined || value === null) return []
-  return stringList(value, maxItems, maxLength)
-}
-
 function optionalId(value: unknown): string {
   if (value === undefined || value === null || value === '') return ''
   if (typeof value !== 'string') throw new HttpError(400, '关联字段不正确')
   return value.trim()
-}
-
-function stringList(value: unknown, maxItems: number, maxLength: number): string[] {
-  if (!Array.isArray(value)) throw new HttpError(400, '列表字段格式不正确')
-  const items = value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
-  if (items.length > maxItems) throw new HttpError(400, '列表项目太多')
-  if (items.some((item) => item.length > maxLength)) throw new HttpError(400, '列表里有一项太长')
-  return items
 }
 
 async function readJson(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
