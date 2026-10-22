@@ -59,6 +59,7 @@ export interface ContentDraft extends DraftBrief {
   gapLabel: string
   source: DraftSource
   createdAt: string
+  updatedAt: string
 }
 
 export interface Prompt {

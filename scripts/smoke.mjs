@@ -69,8 +69,42 @@ async function main() {
     body: JSON.stringify(preview),
   })
   if (!stored.draft?.id) throw new Error('draft save failed')
+  if (!stored.draft.updatedAt) throw new Error('draft save missing updatedAt')
+  const revisedTitle = '澄川智能体工场产品说明·已改'
+  const revisedBody = `${preview.body}\n\n补充：改稿后仍由你自己发布。`
+  const updated = await json(`/api/studios/${studio.id}/drafts/${stored.draft.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      channel: 'faq',
+      title: revisedTitle,
+      body: revisedBody,
+      citeSentences: preview.citeSentences,
+      urlHint: preview.urlHint,
+    }),
+  })
+  if (updated.draft?.title !== revisedTitle) throw new Error('draft update did not keep the new title')
+  if (updated.draft?.channel !== 'faq') throw new Error('draft update did not keep the new channel')
+  if (!updated.draft?.updatedAt || updated.draft.updatedAt < stored.draft.updatedAt) {
+    throw new Error('draft update did not move updatedAt')
+  }
+  const replaced = await json(`/api/studios/${studio.id}/drafts/${stored.draft.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      channel: 'faq',
+      title: revisedTitle,
+      body: revisedBody,
+      citeSentences: preview.citeSentences,
+      urlHint: preview.urlHint,
+    }),
+  })
+  if (replaced.draft?.id !== stored.draft.id) throw new Error('PUT replaced the draft id')
   const listed = await json(`/api/studios/${studio.id}/drafts`)
-  if (!listed.drafts?.some((item) => item.id === stored.draft.id)) throw new Error('saved draft missing from list')
+  const found = listed.drafts?.find((item) => item.id === stored.draft.id)
+  if (!found || found.title !== revisedTitle) throw new Error('updated draft missing from list')
+  const copied = await json(`/api/studios/${studio.id}/drafts/${stored.draft.id}/copy`, { method: 'POST' })
+  if (!copied.draft?.id || copied.draft.id === stored.draft.id) throw new Error('draft copy did not create a new row')
+  if (!String(copied.draft.title).includes('副本')) throw new Error('draft copy title missing 副本')
+  await json(`/api/studios/${studio.id}/drafts/${copied.draft.id}`, { method: 'DELETE' })
   await json(`/api/studios/${studio.id}/drafts/${stored.draft.id}`, { method: 'DELETE' })
   console.log(JSON.stringify({
     ok: true,

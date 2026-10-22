@@ -47,6 +47,13 @@ export function DraftsPage() {
   const [generating, setGenerating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [editing, setEditing] = useState<ContentDraft | null>(null)
+  const [editChannel, setEditChannel] = useState<DraftChannel>('product-promo')
+  const [editTitle, setEditTitle] = useState('')
+  const [editBody, setEditBody] = useState('')
+  const [editCites, setEditCites] = useState('')
+  const [editUrl, setEditUrl] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
 
   const load = async (id: string) => {
     const [promptPayload, diagnosisPayload, draftPayload] = await Promise.all([
@@ -63,8 +70,14 @@ export function DraftsPage() {
     if (!studioId) return
     setPreview(null)
     setSaved(false)
+    setEditing(null)
     load(studioId).catch((err: unknown) => setError(err instanceof Error ? err.message : '草稿加载失败'))
   }, [studioId])
+
+  useEffect(() => {
+    if (!editing) return
+    document.getElementById('draft-editor')?.scrollIntoView({ block: 'nearest' })
+  }, [editing?.id])
 
   const selectedDiagnosis = diagnoses.find((item) => item.id === diagnosisId)
   const gaps = selectedDiagnosis?.checklist.filter((item) => item.status !== 'pass') ?? []
@@ -147,14 +160,76 @@ export function DraftsPage() {
   }
 
   const remove = async (id: string) => {
-    if (!studioId || !window.confirm('删除这篇草稿？')) return
-    await api(`/api/studios/${studioId}/drafts/${id}`, { method: 'DELETE' })
-    await load(studioId)
+    if (!studioId || !window.confirm('删除这篇草稿？已保存的修改会一起删掉。')) return
+    try {
+      await api(`/api/studios/${studioId}/drafts/${id}`, { method: 'DELETE' })
+      if (editing?.id === id) setEditing(null)
+      setNotice('已删除这篇草稿。')
+      await load(studioId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败')
+    }
+  }
+
+  const openEdit = (item: ContentDraft) => {
+    setEditing(item)
+    setEditChannel(item.channel)
+    setEditTitle(item.title)
+    setEditBody(item.body)
+    setEditCites(item.citeSentences.join('\n'))
+    setEditUrl(item.urlHint)
+    setError('')
+    setNotice('')
+  }
+
+  const saveEdit = async () => {
+    if (!studioId || !editing) return
+    setEditSaving(true)
+    setError('')
+    try {
+      const result = await api<{ draft: ContentDraft }>(`/api/studios/${studioId}/drafts/${editing.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          channel: editChannel,
+          title: editTitle.trim(),
+          body: editBody.trim(),
+          citeSentences: editCites
+            .split('\n')
+            .map((item) => item.trim())
+            .filter(Boolean),
+          urlHint: editUrl.trim(),
+        }),
+      })
+      setEditing(result.draft)
+      setEditChannel(result.draft.channel)
+      setEditTitle(result.draft.title)
+      setEditBody(result.draft.body)
+      setEditCites(result.draft.citeSentences.join('\n'))
+      setEditUrl(result.draft.urlHint)
+      setNotice('已保存修改。刷新页面后仍是这篇新内容。')
+      await load(studioId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  const duplicate = async (id: string) => {
+    if (!studioId) return
+    setError('')
+    try {
+      const result = await api<{ draft: ContentDraft }>(`/api/studios/${studioId}/drafts/${id}/copy`, { method: 'POST' })
+      setNotice(`已另存为「${result.draft.title}」。`)
+      await load(studioId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '另存失败')
+    }
   }
 
   const rows: DraftRow[] = drafts.map((item) => ({
     id: item.id,
-    when: formatTime(item.createdAt),
+    when: formatTime(item.updatedAt || item.createdAt),
     channel: channelLabel(item.channel),
     title: item.title,
     source: SOURCE_LABEL[item.source] ?? item.source,
@@ -288,7 +363,61 @@ export function DraftsPage() {
         ) : null}
         <VStack gap={2}>
           <Heading level={2}>草稿箱</Heading>
+          <Text color="secondary">打开一篇已保存的草稿可以改标题、正文和渠道。保存会更新原来的记录。</Text>
           {rows.length === 0 ? <Text color="secondary">还没有保存的草稿。</Text> : null}
+          {editing ? (
+            <Section id="draft-editor">
+              <VStack gap={3}>
+                <Heading level={3}>编辑草稿</Heading>
+                <Text color="secondary">
+                  {channelLabel(editing.channel)} · 创建于 {formatTime(editing.createdAt)} · 最后编辑 {formatTime(editing.updatedAt)}
+                  {editing.promptText ? ` · 题目：${editing.promptText}` : ''}
+                  {editing.gapLabel ? ` · 缺口：${editing.gapLabel}` : ''}
+                </Text>
+                <Selector
+                  label="渠道"
+                  value={editChannel}
+                  options={DRAFT_CHANNELS.map((item) => ({ value: item.id, label: item.label, description: item.hint }))}
+                  onChange={(value) => {
+                    const next = DRAFT_CHANNELS.find((item) => item.id === value)
+                    if (next) setEditChannel(next.id)
+                  }}
+                />
+                <TextInput label="标题" value={editTitle} onChange={setEditTitle} width="100%" />
+                <TextArea label="正文" value={editBody} onChange={setEditBody} rows={14} width="100%" />
+                <TextArea
+                  label="建议被引用的句子"
+                  description="一行一句。"
+                  value={editCites}
+                  onChange={setEditCites}
+                  rows={5}
+                  width="100%"
+                />
+                <TextInput label="建议落地网址" value={editUrl} onChange={setEditUrl} width="100%" />
+                <HStack gap={2} wrap="wrap">
+                  <Button label="保存修改" variant="primary" onClick={() => void saveEdit()} isLoading={editSaving} />
+                  <Button
+                    label="复制全文"
+                    variant="secondary"
+                    onClick={() =>
+                      void copyText(
+                        formatDraftForCopy({
+                          title: editTitle.trim(),
+                          body: editBody.trim(),
+                          citeSentences: editCites
+                            .split('\n')
+                            .map((item) => item.trim())
+                            .filter(Boolean),
+                          urlHint: editUrl.trim(),
+                        }),
+                      )
+                    }
+                  />
+                  <Button label="取消" variant="ghost" onClick={() => setEditing(null)} />
+                </HStack>
+              </VStack>
+            </Section>
+          ) : null}
           <Table
             data={rows}
             idKey="id"
@@ -296,25 +425,26 @@ export function DraftsPage() {
             hasHover
             verticalAlign="top"
             columns={[
-              { key: 'when', header: '时间', width: pixel(120) },
+              { key: 'when', header: '最后编辑', width: pixel(120) },
               { key: 'channel', header: '渠道', width: pixel(140) },
               { key: 'title', header: '标题', width: proportional(2, { minWidth: 180 }) },
               { key: 'source', header: '来源', width: pixel(100) },
               {
                 key: 'id',
                 header: '操作',
-                width: pixel(160),
+                width: pixel(240),
                 renderCell: (row) => (
-                  <HStack gap={1}>
+                  <HStack gap={1} wrap="wrap">
                     <Button
-                      label="复制"
+                      label="编辑"
                       size="sm"
                       variant="ghost"
                       onClick={() => {
                         const found = drafts.find((item) => item.id === row.id)
-                        if (found) void copyText(formatDraftForCopy(found))
+                        if (found) openEdit(found)
                       }}
                     />
+                    <Button label="另存" size="sm" variant="ghost" onClick={() => void duplicate(row.id)} />
                     <Button label="删除" size="sm" variant="ghost" onClick={() => void remove(row.id)} />
                   </HStack>
                 ),

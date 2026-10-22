@@ -1,3 +1,4 @@
+import type { DraftEditable } from '../shared/drafts.ts'
 import type { CheckItem, ContentDraft, Cycle, CycleKind, Diagnosis, Observation, Prompt, Sentiment, Studio } from '../shared/types.ts'
 import { HttpError } from './errors.ts'
 
@@ -31,6 +32,7 @@ interface DraftRow {
   gap_label: string
   source: ContentDraft['source']
   created_at: string
+  updated_at: string
 }
 
 interface PromptRow {
@@ -319,10 +321,16 @@ export async function insertDiagnosis(db: D1Database, diagnosis: Diagnosis): Pro
 
 export async function listDrafts(db: D1Database, studioId: string): Promise<ContentDraft[]> {
   const { results } = await db
-    .prepare('SELECT * FROM drafts WHERE studio_id = ? ORDER BY created_at DESC LIMIT 50')
+    .prepare('SELECT * FROM drafts WHERE studio_id = ? ORDER BY updated_at DESC, created_at DESC LIMIT 50')
     .bind(studioId)
     .all<DraftRow>()
   return results.map(mapDraft)
+}
+
+export async function getDraft(db: D1Database, studioId: string, draftId: string): Promise<ContentDraft> {
+  const row = await db.prepare('SELECT * FROM drafts WHERE id = ? AND studio_id = ?').bind(draftId, studioId).first<DraftRow>()
+  if (!row) throw new HttpError(404, '没有找到这篇草稿')
+  return mapDraft(row)
 }
 
 export async function insertDraft(db: D1Database, draft: ContentDraft): Promise<void> {
@@ -330,8 +338,8 @@ export async function insertDraft(db: D1Database, draft: ContentDraft): Promise<
     .prepare(
       `INSERT INTO drafts (
          id, studio_id, channel, title, body, cite_sentences, url_hint,
-         prompt_id, prompt_text, diagnosis_id, gap_label, source, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         prompt_id, prompt_text, diagnosis_id, gap_label, source, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       draft.id,
@@ -347,8 +355,28 @@ export async function insertDraft(db: D1Database, draft: ContentDraft): Promise<
       draft.gapLabel,
       draft.source,
       draft.createdAt,
+      draft.updatedAt,
     )
     .run()
+}
+
+export async function updateDraft(
+  db: D1Database,
+  studioId: string,
+  draftId: string,
+  fields: DraftEditable,
+  updatedAt: string,
+): Promise<ContentDraft> {
+  const result = await db
+    .prepare(
+      `UPDATE drafts
+       SET channel = ?, title = ?, body = ?, cite_sentences = ?, url_hint = ?, updated_at = ?
+       WHERE id = ? AND studio_id = ?`,
+    )
+    .bind(fields.channel, fields.title, fields.body, JSON.stringify(fields.citeSentences), fields.urlHint, updatedAt, draftId, studioId)
+    .run()
+  if ((result.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这篇草稿')
+  return getDraft(db, studioId, draftId)
 }
 
 export async function deleteDraft(db: D1Database, studioId: string, draftId: string): Promise<void> {
@@ -389,6 +417,7 @@ function mapDraft(row: DraftRow): ContentDraft {
     gapLabel: row.gap_label,
     source: row.source,
     createdAt: row.created_at,
+    updatedAt: row.updated_at || row.created_at,
   }
 }
 

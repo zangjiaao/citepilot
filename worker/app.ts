@@ -1,8 +1,8 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { compareCycles, metricsFor } from '../shared/compare.ts'
 import { defaultCycleName } from '../shared/cycles.ts'
 import { buildDiagnosis } from '../shared/diagnose.ts'
-import { acceptDraft, channelLabel, isDraftChannel, templateDraft } from '../shared/drafts.ts'
+import { acceptDraft, channelLabel, copyDraftTitle, isDraftChannel, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
 import { parseAnswer } from '../shared/parseAnswer.ts'
 import { isCycleKind, isPlatformId, PLATFORMS } from '../shared/platforms.ts'
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
@@ -12,6 +12,7 @@ import {
   deleteCycle,
   deleteDraft,
   deleteObservation,
+  getDraft,
   deletePrompt,
   insertCycle,
   insertDiagnosis,
@@ -27,6 +28,7 @@ import {
   listStudios,
   mustCycle,
   mustStudio,
+  updateDraft,
   updateStudio,
 } from './db.ts'
 import { llmConfig, type AppBindings } from './env.ts'
@@ -479,16 +481,9 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
 app.post('/api/studios/:id/drafts', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
   const record = asRecord(await readJson(c))
-  const channelRaw = stringField(record, 'channel').trim()
-  if (!isDraftChannel(channelRaw)) throw new HttpError(400, '不认识这个渠道')
-  const title = stringField(record, 'title').trim()
-  const body = stringField(record, 'body').trim()
-  const urlHint = stringField(record, 'urlHint').trim()
-  const citeSentences = stringList(record.citeSentences, 6, 180)
-  if (title.length < 4 || title.length > 80) throw new HttpError(400, '标题需要 4 到 80 个字')
-  if (body.length < 40 || body.length > 8000) throw new HttpError(400, '正文太短或太长')
-  if (citeSentences.length < 2) throw new HttpError(400, '至少保留两句可引用的话')
-  if (urlHint.length < 8 || urlHint.length > 300) throw new HttpError(400, '建议网址需要写清落在哪一页')
+  const parsed = parseDraftEdit(record)
+  if (!parsed.ok) throw new HttpError(400, parsed.error)
+  const { channel: channelRaw, title, body, citeSentences, urlHint } = parsed.value
   const source = optionalString(record, 'source')
   if (source !== 'template' && source !== 'deepseek') throw new HttpError(400, '草稿来源不正确')
 
@@ -506,6 +501,7 @@ app.post('/api/studios/:id/drafts', async (c) => {
   }
   const gapLabel = optionalString(record, 'gapLabel').trim().slice(0, 80)
 
+  const now = new Date().toISOString()
   const draft: ContentDraft = {
     id: crypto.randomUUID(),
     studioId: studio.id,
@@ -519,9 +515,42 @@ app.post('/api/studios/:id/drafts', async (c) => {
     diagnosisId: diagnosisId || null,
     gapLabel,
     source,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
+    updatedAt: now,
   }
   await insertDraft(c.env.DB, draft)
+  return c.json({ draft }, 201)
+})
+
+async function saveDraftEdits(c: Context<{ Bindings: AppBindings }>) {
+  const studioId = c.req.param('id')
+  const draftId = c.req.param('draftId')
+  if (!studioId || !draftId) throw new HttpError(400, '缺少草稿')
+  const studio = await mustStudio(c.env.DB, studioId)
+  const existing = await getDraft(c.env.DB, studio.id, draftId)
+  const parsed = parseDraftEdit(asRecord(await readJson(c)))
+  if (!parsed.ok) throw new HttpError(400, parsed.error)
+  const draft = await updateDraft(c.env.DB, studio.id, existing.id, parsed.value, new Date().toISOString())
+  console.log(JSON.stringify({ message: 'draft updated', id: draft.id, channel: draft.channel }))
+  return c.json({ draft })
+}
+
+app.patch('/api/studios/:id/drafts/:draftId', saveDraftEdits)
+app.put('/api/studios/:id/drafts/:draftId', saveDraftEdits)
+
+app.post('/api/studios/:id/drafts/:draftId/copy', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const existing = await getDraft(c.env.DB, studio.id, c.req.param('draftId'))
+  const now = new Date().toISOString()
+  const draft: ContentDraft = {
+    ...existing,
+    id: crypto.randomUUID(),
+    title: copyDraftTitle(existing.title),
+    createdAt: now,
+    updatedAt: now,
+  }
+  await insertDraft(c.env.DB, draft)
+  console.log(JSON.stringify({ message: 'draft copied', from: existing.id, id: draft.id }))
   return c.json({ draft }, 201)
 })
 

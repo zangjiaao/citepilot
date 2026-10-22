@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { acceptDraft, DRAFT_CHANNELS, formatDraftForCopy, templateDraft } from '../shared/drafts.ts'
+import { acceptDraft, copyDraftTitle, DRAFT_CHANNELS, formatDraftForCopy, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -64,6 +64,35 @@ describe('templateDraft', () => {
     const draft = templateDraft({ studio: thin, channel: 'product-promo' })
     expect(draft.body).toContain('面向中大型企业的前场部署工程师工作室')
     expect(draft.body).toContain('还没有可公开案例')
+  })
+})
+
+describe('parseDraftEdit', () => {
+  const valid = {
+    channel: 'faq',
+    title: '澄川智能体工场常见问题',
+    body: '澄川智能体工场把企业知识库、权限和回归题一起交付。公开说明只写档案里已经有的事实，不追加客户名或效果数字。',
+    citeSentences: ['澄川智能体工场交付企业知识库。', '澄川智能体工场写明权限和回归题。'],
+    urlHint: 'https://example.com/faq — 常见问题页',
+  }
+
+  it('accepts an edit of the saved fields', () => {
+    const parsed = parseDraftEdit(valid)
+    expect(parsed.ok).toBe(true)
+    if (parsed.ok) expect(parsed.value.channel).toBe('faq')
+  })
+
+  it('rejects a short title and an unknown channel', () => {
+    expect(parseDraftEdit({ ...valid, title: '短' }).ok).toBe(false)
+    expect(parseDraftEdit({ ...valid, channel: 'email' }).ok).toBe(false)
+    expect(parseDraftEdit({ ...valid, citeSentences: ['只有一句'] }).ok).toBe(false)
+  })
+
+  it('keeps a copied title inside the length limit', () => {
+    expect(copyDraftTitle('澄川智能体工场产品说明')).toBe('澄川智能体工场产品说明（副本）')
+    expect(copyDraftTitle(`${'很长的标题'.repeat(20)}`)).toHaveLength(80)
+    expect(copyDraftTitle(`${'很长的标题'.repeat(20)}`).endsWith('（副本）')).toBe(true)
+    expect(copyDraftTitle('已经是副本（副本）')).toBe('已经是副本（副本）')
   })
 })
 

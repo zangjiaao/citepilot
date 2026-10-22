@@ -63,6 +63,42 @@ export function acceptDraft(raw: unknown, brand: string): DraftBrief | null {
   return { title, body, citeSentences, urlHint }
 }
 
+export interface DraftEditable extends DraftBrief {
+  channel: DraftChannel
+}
+
+export type DraftEditResult = { ok: true; value: DraftEditable } | { ok: false; error: string }
+
+export function parseDraftEdit(input: unknown): DraftEditResult {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, error: '请求体格式不正确' }
+  const record = input as Record<string, unknown>
+  const channel = typeof record.channel === 'string' ? record.channel.trim() : ''
+  if (!isDraftChannel(channel)) return { ok: false, error: '不认识这个渠道' }
+  const title = typeof record.title === 'string' ? record.title.trim() : ''
+  const body = typeof record.body === 'string' ? record.body.trim() : ''
+  const urlHint = typeof record.urlHint === 'string' ? record.urlHint.trim() : ''
+  if (title.length < 4 || title.length > 80) return { ok: false, error: '标题需要 4 到 80 个字' }
+  if (body.length < 40 || body.length > 8000) return { ok: false, error: '正文太短或太长' }
+  if (urlHint.length < 8 || urlHint.length > 300) return { ok: false, error: '建议网址需要写清落在哪一页' }
+  if (!Array.isArray(record.citeSentences)) return { ok: false, error: '可引用句子格式不正确' }
+  const citeSentences = record.citeSentences
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean)
+  if (citeSentences.length > 6) return { ok: false, error: '可引用句子太多' }
+  if (citeSentences.some((item) => item.length > 180)) return { ok: false, error: '有一句可引用的话太长' }
+  if (citeSentences.length < 2) return { ok: false, error: '至少保留两句可引用的话' }
+  return { ok: true, value: { channel, title, body, citeSentences, urlHint } }
+}
+
+export function copyDraftTitle(title: string): string {
+  const suffix = '（副本）'
+  const base = title.trim()
+  const next = base.endsWith(suffix) ? base : `${base}${suffix}`
+  if (next.length <= 80) return next
+  return `${next.slice(0, 80 - suffix.length)}${suffix}`
+}
+
 export function formatDraftForCopy(draft: DraftBrief): string {
   const cites = draft.citeSentences.map((sentence) => `- ${sentence}`).join('\n')
   return `标题：${draft.title}\n\n${draft.body}\n\n建议被引用的句子：\n${cites}\n\n建议落地网址：\n${draft.urlHint}`
