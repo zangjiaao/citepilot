@@ -6,6 +6,15 @@ async function main() {
   const studios = await json('/api/studios')
   const studio = studios.studios?.[0]
   if (!studio?.id) throw new Error('missing seed studio')
+  if (!studio.voice || !studio.bannedWords || !studio.compliance) {
+    throw new Error('seed brand should include voice, banned words, and compliance')
+  }
+  const demoAssets = await json(`/api/studios/${studio.id}/assets`)
+  const demoList = demoAssets.assets ?? []
+  if (demoList.length < 5) throw new Error(`seed library should have demo assets, got ${demoList.length}`)
+  const metricCase = demoList.find((item) => (item.details?.metrics ?? []).some((metric) => metric.before === '45' && metric.after === '8' && metric.customerAuthorized))
+  if (!metricCase) throw new Error('seed library missing the authorized 45 to 8 case')
+  if (!demoList.some((item) => item.publicity === 'private')) throw new Error('seed library missing a private asset')
   if (!studio.competitors?.[0]?.domain || !studio.competitors?.[0]?.aliases?.length) {
     throw new Error('seed competitors should include aliases and a domain')
   }

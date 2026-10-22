@@ -271,12 +271,15 @@ export function DraftsPage() {
         ) : null}
         <Section>
           <VStack gap={3}>
-            <Heading level={2}>将使用的品牌资料</Heading>
-            <ProfileBlock label="能力" items={studio?.capabilities ?? []} />
-            <ProfileBlock label="案例" items={studio?.cases ?? []} />
-            <ProfileBlock label="目标客户" items={studio?.targetCustomers ?? []} />
-            <ProfileBlock label="解决方案" items={studio?.solutions ?? []} />
-            <Button label="到品牌里修改" variant="secondary" onClick={() => navigate('/studio')} />
+            <Heading level={2}>起草时带上的品牌边界</Heading>
+            <Text color="secondary">语气、禁用词和合规红线来自品牌页。案例、产品和数据成效到素材库里勾选。</Text>
+            <Text>{studio?.voice?.trim() ? `语气：${studio.voice.trim()}` : '还没有写品牌语气。'}</Text>
+            <Text>{studio?.bannedWords?.trim() ? `禁用词：${studio.bannedWords.trim()}` : '没有禁用词。'}</Text>
+            <Text>{studio?.compliance?.trim() ? `合规红线：${studio.compliance.trim()}` : '没有额外合规红线。'}</Text>
+            <FormLayout direction="horizontal">
+              <Button label="打开素材库" variant="secondary" onClick={() => navigate('/library')} />
+              <Button label="到品牌里修改" variant="secondary" onClick={() => navigate('/studio')} />
+            </FormLayout>
           </VStack>
         </Section>
         <FormLayout direction="vertical">
@@ -541,14 +544,5 @@ export function DraftsPage() {
         </VStack>
       </VStack>
     </PageFrame>
-  )
-}
-
-function ProfileBlock({ label, items }: { label: string; items: string[] }) {
-  return (
-    <VStack gap={1}>
-      <Text type="label">{label}</Text>
-      <Text color="secondary">{items.length > 0 ? items.join('；') : '还没有填写。生成时会改用定位和服务，建议先补上。'}</Text>
-    </VStack>
   )
 }

@@ -43,6 +43,38 @@ export interface BrandProfile {
 const LONG_TEXT = 20000
 const LIST_CAP = 40
 
+export interface BrandPageFields {
+  name: string
+  website: string
+  positioning: string
+  services: string[]
+  competitors: { id: string; name: string; aliases: string[]; domain: string }[]
+  keywords: string[]
+  voice: string
+  bannedWords: string
+  compliance: string
+}
+
+export function applyBrandPageSave<T extends BrandProfile & BrandPageFields & {
+  capabilities: string[]
+  cases: string[]
+  targetCustomers: string[]
+  solutions: string[]
+}>(existing: T, form: BrandPageFields): T {
+  return {
+    ...existing,
+    name: form.name,
+    website: form.website,
+    positioning: form.positioning,
+    services: form.services,
+    competitors: form.competitors,
+    keywords: form.keywords,
+    voice: form.voice,
+    bannedWords: form.bannedWords,
+    compliance: form.compliance,
+  }
+}
+
 export function blankBrandProfile(): BrandProfile {
   return {
     introduction: '',

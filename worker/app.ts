@@ -7,7 +7,7 @@ import { acceptDraft, channelLabel, copyDraftTitle, DRAFT_CHANNELS, isDraftChann
 import { parseAnswer, summarize } from '../shared/parseAnswer.ts'
 import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.ts'
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
-import { readBrandProfile } from '../shared/brandProfile.ts'
+import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
 import { applyBrandMention, assembleDraftPrompt, channelForContentType, isContentType, materialDraft, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
 import { readAssetDraft } from '../shared/assets.ts'
@@ -109,7 +109,7 @@ app.get('/api/studios/:id', async (c) => {
 app.put('/api/studios/:id', async (c) => {
   const existing = await mustStudio(c.env.DB, c.req.param('id'))
   const draft = studioFromBody(await readJson(c))
-  const studio: Studio = { ...existing, ...draft, updatedAt: new Date().toISOString() }
+  const studio: Studio = { ...applyBrandPageSave(existing, draft), updatedAt: new Date().toISOString() }
   await updateStudio(c.env.DB, studio)
   return c.json({ studio })
 })

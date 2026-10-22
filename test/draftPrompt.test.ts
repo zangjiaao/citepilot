@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
+import { applyBrandPageSave, blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { emptyDetails, readAssetDraft, type Asset } from '../shared/assets.ts'
 import { assembleDraftPrompt, NO_FABRICATION_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE } from '../shared/draftPrompt.ts'
@@ -119,6 +119,46 @@ describe('readAssetDraft', () => {
       expect(parsed.value.details.metrics[0]?.customerAuthorized).toBe(true)
       expect(parsed.value.tags).toEqual(['制造', '查询'])
     }
+  })
+})
+
+describe('applyBrandPageSave', () => {
+  it('keeps stored lists and long profile fields when the brand page is saved', () => {
+    const existing = {
+      ...blankBrandProfile(),
+      name: '旧品牌',
+      website: 'https://example.com/old',
+      positioning: '旧定位写满十个字以上',
+      services: ['旧服务'],
+      competitors: [{ id: 'c1', name: '旧竞品', aliases: ['旧别名'], domain: 'rival.example' }],
+      keywords: ['旧词'],
+      capabilities: ['旧能力'],
+      cases: ['旧案例'],
+      targetCustomers: ['旧客户'],
+      solutions: ['旧方案'],
+      introduction: '旧介绍，含逗号',
+      objections: [{ id: 'faq-1', question: '贵吗', answer: '按范围报价' }],
+      references: [{ id: 'ref-1', title: '官网', url: 'https://example.com', excerpt: '公开说明' }],
+      voice: '旧语气',
+    }
+    const next = applyBrandPageSave(existing, {
+      name: '新品牌',
+      website: 'https://example.com',
+      positioning: '只做可核对的交付',
+      services: ['知识库'],
+      competitors: [],
+      keywords: ['引用'],
+      voice: '新语气',
+      bannedWords: '行业领先',
+      compliance: '不写未授权数字',
+    })
+    expect(next.name).toBe('新品牌')
+    expect(next.voice).toBe('新语气')
+    expect(next.capabilities).toEqual(['旧能力'])
+    expect(next.cases).toEqual(['旧案例'])
+    expect(next.introduction).toContain('，')
+    expect(next.objections).toEqual(existing.objections)
+    expect(next.references).toEqual(existing.references)
   })
 })
 

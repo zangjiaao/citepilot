@@ -3,18 +3,17 @@ import { useNavigate } from 'react-router-dom'
 import { Button } from '@astryxdesign/core/Button'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { FormLayout } from '@astryxdesign/core/FormLayout'
+import { HStack } from '@astryxdesign/core/HStack'
 import { Link } from '@astryxdesign/core/Link'
 import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { VStack } from '@astryxdesign/core/VStack'
-import { blankBrandProfile, type BrandProfile } from '../../../shared/brandProfile.ts'
 import type { Competitor, Studio } from '../../../shared/types.ts'
 import { ApiError, api } from '../api'
 import { joinLines, splitLines, splitList } from '../format'
 import { useStudio } from '../studio'
 import { ErrorBanner, PageFrame } from '../ui'
-import { ObjectionEditor, ProfileTextAreas } from './BrandProfileFields'
 
 interface CompetitorDraft {
   id: string
@@ -23,17 +22,16 @@ interface CompetitorDraft {
   domain: string
 }
 
-interface Draft extends BrandProfile {
+interface Draft {
   name: string
   website: string
   positioning: string
   services: string
   competitors: CompetitorDraft[]
   keywords: string
-  capabilities: string
-  cases: string
-  targetCustomers: string
-  solutions: string
+  voice: string
+  bannedWords: string
+  compliance: string
 }
 
 const emptyDraft: Draft = {
@@ -43,11 +41,9 @@ const emptyDraft: Draft = {
   services: '',
   competitors: [],
   keywords: '',
-  capabilities: '',
-  cases: '',
-  targetCustomers: '',
-  solutions: '',
-  ...blankBrandProfile(),
+  voice: '',
+  bannedWords: '',
+  compliance: '',
 }
 
 export function StudioPage() {
@@ -100,24 +96,9 @@ export function StudioPage() {
           domain: item.domain.trim(),
         })),
       keywords: splitList(draft.keywords),
-      capabilities: splitLines(draft.capabilities),
-      cases: splitLines(draft.cases),
-      targetCustomers: splitLines(draft.targetCustomers),
-      solutions: splitLines(draft.solutions),
-      introduction: draft.introduction,
-      teamBackground: draft.teamBackground,
-      differentiation: draft.differentiation,
-      caseStudies: draft.caseStudies,
-      methodology: draft.methodology,
-      pricing: draft.pricing,
-      customerProfile: draft.customerProfile,
-      customerPains: draft.customerPains,
-      objections: draft.objections,
-      evidence: draft.evidence,
       voice: draft.voice,
       bannedWords: draft.bannedWords,
       compliance: draft.compliance,
-      references: draft.references,
     }
     try {
       if (creating || !studio) {
@@ -127,7 +108,7 @@ export function StudioPage() {
         setMessage('已新建品牌，并准备了今天的抽查批次。')
       } else {
         await api(`/api/studios/${studio.id}`, { method: 'PUT', body: JSON.stringify(payload) })
-        setMessage('品牌已保存。之后生成的题目和监测解析都会用这份资料。')
+        setMessage('品牌已保存。出题、监测和起草的语气红线都会用这份资料。')
       }
       await refresh()
     } catch (err) {
@@ -164,17 +145,20 @@ export function StudioPage() {
   return (
     <PageFrame
       title="品牌"
-      description="名称、官网、定位、服务、竞品和关键词会用来出题，也会用来判断回答里有没有提到你。下面的长文、案例和资料库会交给内容起草，句子里的逗号会保留。"
+      description="品牌页只管出题和监测用的基本信息，以及起草时的语气与红线。案例、产品、巧思、数据成效等可分享素材都去「素材库」。"
       actions={
-        <Button
-          label="新建品牌"
-          variant="secondary"
-          onClick={() => {
-            setCreating(true)
-            setDraft(emptyDraft)
-            setMessage('')
-          }}
-        />
+        <HStack gap={2}>
+          <Button label="打开素材库" variant="secondary" onClick={() => navigate('/library')} />
+          <Button
+            label="新建品牌"
+            variant="secondary"
+            onClick={() => {
+              setCreating(true)
+              setDraft(emptyDraft)
+              setMessage('')
+            }}
+          />
+        </HStack>
       }
     >
       <VStack as="form" gap={4} onSubmit={(event) => void save(event)}>
@@ -245,53 +229,34 @@ export function StudioPage() {
             status={fieldStatus(fieldErrors.keywords)}
           />
           <TextArea
-            label="能力"
-            description="一行一项。句子里的逗号会保留。内容起草会把这些句子写成可被引用的事实。"
-            value={draft.capabilities}
-            onChange={update('capabilities')}
-            rows={4}
-            width="100%"
-            statusVariant="detached"
-            status={fieldStatus(fieldErrors.capabilities)}
-          />
-          <TextArea
-            label="案例"
-            description="一行一个可公开的例子。句子里的逗号会保留。不要写无法核对的客户名或效果数字。"
-            value={draft.cases}
-            onChange={update('cases')}
-            rows={4}
-            width="100%"
-            statusVariant="detached"
-            status={fieldStatus(fieldErrors.cases)}
-          />
-          <TextArea
-            label="目标客户"
-            description="一行一类客户。句子里的逗号会保留。"
-            value={draft.targetCustomers}
-            onChange={update('targetCustomers')}
+            label="品牌语气 / 写作风格"
+            value={draft.voice}
+            onChange={update('voice')}
             rows={3}
             width="100%"
             statusVariant="detached"
-            status={fieldStatus(fieldErrors.targetCustomers)}
+            status={fieldStatus(fieldErrors.voice)}
           />
           <TextArea
-            label="解决方案"
-            description="一行一项。句子里的逗号会保留。产品宣传和官网长文会按这些范围来写。"
-            value={draft.solutions}
-            onChange={update('solutions')}
-            rows={4}
+            label="禁用词"
+            description="起草时会避开这些说法。"
+            value={draft.bannedWords}
+            onChange={update('bannedWords')}
+            rows={3}
             width="100%"
             statusVariant="detached"
-            status={fieldStatus(fieldErrors.solutions)}
+            status={fieldStatus(fieldErrors.bannedWords)}
           />
-          <ProfileTextAreas
-            values={draft}
-            onChange={(key, value) => update(key as TextKey)(value)}
-            status={(key) => fieldStatus(fieldErrors[key as keyof Draft])}
+          <TextArea
+            label="合规红线"
+            description="起草时不得越过这里。"
+            value={draft.compliance}
+            onChange={update('compliance')}
+            rows={3}
+            width="100%"
+            statusVariant="detached"
+            status={fieldStatus(fieldErrors.compliance)}
           />
-          <Button label="打开素材库" variant="secondary" onClick={() => navigate('/library')} />
-          <Text color="secondary">案例、产品、巧思、交互、数据成效、客户评价和参考资料都写在素材库里。这里只留品牌语气和红线。</Text>
-          <ObjectionEditor items={draft.objections} onChange={(objections) => setDraft((current) => ({ ...current, objections }))} />
         </FormLayout>
         <Button label={creating || !studio ? '创建' : '保存品牌'} variant="primary" type="submit" isLoading={saving} />
         {studio && !creating ? (
@@ -323,24 +288,9 @@ function fromStudio(studio: Studio): Draft {
     services: joinLines(studio.services),
     competitors: studio.competitors.map(competitorDraft),
     keywords: joinLines(studio.keywords),
-    capabilities: joinLines(studio.capabilities),
-    cases: joinLines(studio.cases),
-    targetCustomers: joinLines(studio.targetCustomers),
-    solutions: joinLines(studio.solutions),
-    introduction: studio.introduction,
-    teamBackground: studio.teamBackground,
-    differentiation: studio.differentiation,
-    caseStudies: studio.caseStudies,
-    methodology: studio.methodology,
-    pricing: studio.pricing,
-    customerProfile: studio.customerProfile,
-    customerPains: studio.customerPains,
-    objections: studio.objections,
-    evidence: studio.evidence,
     voice: studio.voice,
     bannedWords: studio.bannedWords,
     compliance: studio.compliance,
-    references: studio.references,
   }
 }
 
@@ -364,24 +314,9 @@ const DRAFT_FIELDS = new Set<keyof Draft>([
   'services',
   'competitors',
   'keywords',
-  'capabilities',
-  'cases',
-  'targetCustomers',
-  'solutions',
-  'introduction',
-  'teamBackground',
-  'differentiation',
-  'caseStudies',
-  'methodology',
-  'pricing',
-  'customerProfile',
-  'customerPains',
-  'objections',
-  'evidence',
   'voice',
   'bannedWords',
   'compliance',
-  'references',
 ])
 
 type TextKey = {
