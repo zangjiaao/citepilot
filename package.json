@@ -1,0 +1,54 @@
+{
+  "name": "citepilot",
+  "version": "1.0.0",
+  "description": "GEO/AEO validation lab — prompt clusters, AI-answer monitoring, and site diagnosis for brand visibility in answer engines.",
+  "scripts": {
+    "dev": "vite",
+    "predev": "npm run db:migrate",
+    "build": "tsc --noEmit --pretty false && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit --pretty false",
+    "db:migrate": "CI=true wrangler d1 migrations apply citepilot --local",
+    "cf-typegen": "wrangler types",
+    "deploy": "npm run build && wrangler deploy",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zangjiaao/citepilot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/zangjiaao/citepilot/issues"
+  },
+  "homepage": "https://github.com/zangjiaao/citepilot#readme",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@astryxdesign/core": "^0.7.1",
+    "@astryxdesign/theme-neutral": "^0.7.1",
+    "@stylexjs/stylex": "^0.19.1",
+    "hono": "^4.13.13",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.4"
+  },
+  "devDependencies": {
+    "@astryxdesign/cli": "^0.7.1",
+    "@cloudflare/vite-plugin": "^1.64.0",
+    "@cloudflare/workers-types": "^5.20261021.1",
+    "@stylexjs/babel-plugin": "^0.19.1",
+    "@stylexjs/rollup-plugin": "^0.19.1",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.151.3"
+  }
+}
