@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Badge } from '@astryxdesign/core/Badge'
 import { Button } from '@astryxdesign/core/Button'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { FormLayout } from '@astryxdesign/core/FormLayout'
 import { Heading } from '@astryxdesign/core/Heading'
-import { HStack } from '@astryxdesign/core/HStack'
+import { HStack, Layout, LayoutContent, LayoutFooter, VStack } from '@astryxdesign/core/Layout'
 import { Selector } from '@astryxdesign/core/Selector'
+import { Table, pixel, proportional, type TableColumn } from '@astryxdesign/core/Table'
 import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
-import { VStack } from '@astryxdesign/core/VStack'
 import {
   ASSET_TYPES,
   assetAngles,
@@ -25,6 +26,16 @@ import { api } from '../api'
 import { formatTime } from '../format'
 import { useStudio } from '../studio'
 import { ErrorBanner, InfoBanner, PageFrame } from '../ui'
+
+interface AssetRow extends Record<string, unknown> {
+  id: string
+  typeLabel: string
+  title: string
+  publicityLabel: string
+  tagsLabel: string
+  updatedLabel: string
+  asset: Asset
+}
 
 interface FormState {
   id: string
@@ -92,6 +103,19 @@ export function LibraryPage() {
     const haystack = `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase()
     return !query.trim() || haystack.includes(query.trim().toLowerCase())
   })
+  const rows = useMemo<AssetRow[]>(
+    () =>
+      visible.map((asset) => ({
+        id: asset.id,
+        typeLabel: assetTypeLabel(asset.type),
+        title: asset.title,
+        publicityLabel: publicityLabel(asset.publicity),
+        tagsLabel: asset.tags.join('、') || '无',
+        updatedLabel: formatTime(asset.updatedAt),
+        asset,
+      })),
+    [visible],
+  )
 
   const closeEditor = () => {
     setEditorOpen(false)
@@ -185,6 +209,35 @@ export function LibraryPage() {
   const showQuote = form.type === 'case' || form.type === 'testimonial'
   const showProblem = form.type === 'case' || form.type === 'product' || form.type === 'idea' || form.type === 'interaction'
   const showHow = form.type === 'product' || form.type === 'idea'
+  const columns: TableColumn<AssetRow>[] = [
+    {
+      key: 'typeLabel',
+      header: '类型',
+      width: pixel(110),
+      renderCell: (row) => <Badge variant="info" label={row.typeLabel} />,
+    },
+    { key: 'title', header: '标题', width: proportional(2, { minWidth: 180 }) },
+    {
+      key: 'publicityLabel',
+      header: '公开程度',
+      width: pixel(120),
+      renderCell: (row) => <Badge variant={publicityVariant(row.asset.publicity)} label={row.publicityLabel} />,
+    },
+    { key: 'tagsLabel', header: '标签', width: proportional(1, { minWidth: 120 }) },
+    { key: 'updatedLabel', header: '更新时间', width: pixel(150) },
+    {
+      key: 'id',
+      header: '操作',
+      width: pixel(150),
+      resizable: false,
+      renderCell: (row) => (
+        <HStack gap={1}>
+          <Button label="编辑" size="sm" variant="secondary" onClick={() => openEdit(row.asset)} />
+          <Button label="删除" size="sm" variant="destructive" onClick={() => void remove(row.asset.id)} />
+        </HStack>
+      ),
+    },
+  ]
 
   return (
     <PageFrame
@@ -213,22 +266,8 @@ export function LibraryPage() {
         <Text color="secondary">
           {visible.length} / {assets.length} 条
         </Text>
-        {visible.map((item) => (
-          <VStack key={item.id} gap={1}>
-            <Text>
-              {assetTypeLabel(item.type)} · {item.title} · {publicityLabel(item.publicity)}
-            </Text>
-            <Text color="secondary">
-              {item.tags.join('、') || '无标签'} · 更新于 {formatTime(item.updatedAt)}
-            </Text>
-            <Text color="secondary">{assetAngles(item)[0]}</Text>
-            <HStack gap={2}>
-              <Button label="编辑" size="sm" variant="secondary" onClick={() => openEdit(item)} />
-              <Button label="删除" size="sm" variant="destructive" onClick={() => void remove(item.id)} />
-            </HStack>
-          </VStack>
-        ))}
-        {visible.length === 0 ? <Text color="secondary">没有符合条件的素材。</Text> : null}
+        {rows.length === 0 ? <Text color="secondary">没有符合条件的素材。</Text> : null}
+        <Table data={rows} columns={columns} idKey="id" hasHover density="compact" textOverflow="truncate" />
       </VStack>
       <Dialog
         isOpen={editorOpen}
@@ -236,11 +275,14 @@ export function LibraryPage() {
           if (!next) closeEditor()
         }}
         purpose="form"
-        width={640}
-        maxHeight="75dvh"
+        width={720}
+        maxHeight="85dvh"
       >
-        <VStack gap={3}>
-          <DialogHeader title={form.id ? '编辑素材' : '添加素材'} onOpenChange={() => closeEditor()} />
+        <Layout
+          header={<DialogHeader title={form.id ? '编辑素材' : '添加素材'} onOpenChange={() => closeEditor()} />}
+          content={
+            <LayoutContent>
+              <VStack gap={3}>
           <ErrorBanner message={formError} />
           <Selector
             label="类型"
@@ -338,14 +380,27 @@ export function LibraryPage() {
             />
           </VStack>
           {form.id ? <Text color="secondary">{assetAngles(fakeAsset(form))[0]}</Text> : null}
-          <HStack gap={2}>
-            <Button label={form.id ? '保存修改' : '加入素材库'} variant="primary" onClick={() => void save()} isLoading={saving} isDisabled={!studioId} />
-            <Button label="取消" variant="ghost" onClick={closeEditor} />
-          </HStack>
-        </VStack>
+              </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack gap={2} hAlign="end">
+                <Button label="取消" variant="secondary" onClick={closeEditor} />
+                <Button label={form.id ? '保存修改' : '加入素材库'} variant="primary" onClick={() => void save()} isLoading={saving} isDisabled={!studioId} />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
       </Dialog>
     </PageFrame>
   )
+}
+
+function publicityVariant(value: Publicity): 'success' | 'warning' | 'neutral' {
+  if (value === 'public') return 'success'
+  if (value === 'anonymous') return 'warning'
+  return 'neutral'
 }
 
 function fakeAsset(form: FormState): Asset {
