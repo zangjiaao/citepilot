@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { FormLayout } from '@astryxdesign/core/FormLayout'
 import { Heading } from '@astryxdesign/core/Heading'
+import { HStack } from '@astryxdesign/core/HStack'
 import { Selector } from '@astryxdesign/core/Selector'
 import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
@@ -62,10 +64,12 @@ export function LibraryPage() {
   const { studioId } = useStudio()
   const [assets, setAssets] = useState<Asset[]>([])
   const [form, setForm] = useState<FormState>(emptyForm)
+  const [editorOpen, setEditorOpen] = useState(false)
   const [typeFilter, setTypeFilter] = useState('')
   const [tagFilter, setTagFilter] = useState('')
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
+  const [formError, setFormError] = useState('')
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -76,6 +80,8 @@ export function LibraryPage() {
 
   useEffect(() => {
     if (!studioId) return
+    setEditorOpen(false)
+    setForm(emptyForm)
     load(studioId).catch((err: unknown) => setError(err instanceof Error ? err.message : '素材库加载失败'))
   }, [studioId])
 
@@ -87,7 +93,19 @@ export function LibraryPage() {
     return !query.trim() || haystack.includes(query.trim().toLowerCase())
   })
 
-  const edit = (asset: Asset) => {
+  const closeEditor = () => {
+    setEditorOpen(false)
+    setForm(emptyForm)
+    setFormError('')
+  }
+
+  const openCreate = () => {
+    setForm(emptyForm)
+    setFormError('')
+    setEditorOpen(true)
+  }
+
+  const openEdit = (asset: Asset) => {
     setForm({
       id: asset.id,
       type: asset.type,
@@ -104,13 +122,22 @@ export function LibraryPage() {
       links: asset.links,
       metrics: asset.details.metrics,
     })
-    setError('')
+    setFormError('')
+    setEditorOpen(true)
+  }
+
+  const updateMetric = (id: string, patch: Partial<CaseMetric>) => {
+    setForm((current) => ({ ...current, metrics: current.metrics.map((item) => (item.id === id ? { ...item, ...patch } : item)) }))
+  }
+
+  const updateLink = (id: string, patch: Partial<AssetLink>) => {
+    setForm((current) => ({ ...current, links: current.links.map((item) => (item.id === id ? { ...item, ...patch } : item)) }))
   }
 
   const save = async () => {
     if (!studioId) return
     setSaving(true)
-    setError('')
+    setFormError('')
     try {
       const payload = {
         type: form.type,
@@ -132,11 +159,11 @@ export function LibraryPage() {
       }
       if (form.id) await api(`/api/studios/${studioId}/assets/${form.id}`, { method: 'PUT', body: JSON.stringify(payload) })
       else await api(`/api/studios/${studioId}/assets`, { method: 'POST', body: JSON.stringify(payload) })
-      setForm(emptyForm)
-      setNotice('已写入素材库。')
+      closeEditor()
+      setNotice(form.id ? '已保存修改。' : '已加入素材库。')
       await load(studioId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存失败')
+      setFormError(err instanceof Error ? err.message : '保存失败')
     } finally {
       setSaving(false)
     }
@@ -147,7 +174,7 @@ export function LibraryPage() {
     setError('')
     try {
       await api(`/api/studios/${studioId}/assets/${id}`, { method: 'DELETE' })
-      if (form.id === id) setForm(emptyForm)
+      if (form.id === id) closeEditor()
       await load(studioId)
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除失败')
@@ -160,7 +187,11 @@ export function LibraryPage() {
   const showHow = form.type === 'product' || form.type === 'idea'
 
   return (
-    <PageFrame title="素材库" description="案例、产品、巧思、交互、数据成效、客户评价、踩坑和参考资料都放在这里。起草时再勾选要用的几条。">
+    <PageFrame
+      title="素材库"
+      description="案例、产品、巧思、交互、数据成效、客户评价、踩坑和参考资料都放在这里。起草时再勾选要用的几条。"
+      actions={<Button label="添加素材" variant="primary" onClick={openCreate} isDisabled={!studioId} />}
+    >
       <VStack gap={4}>
         <ErrorBanner message={error} />
         {notice ? <InfoBanner title={notice} /> : null}
@@ -191,15 +222,26 @@ export function LibraryPage() {
               {item.tags.join('、') || '无标签'} · 更新于 {formatTime(item.updatedAt)}
             </Text>
             <Text color="secondary">{assetAngles(item)[0]}</Text>
-            <FormLayout direction="horizontal">
-              <Button label="编辑" variant="secondary" onClick={() => edit(item)} />
-              <Button label="删除" variant="destructive" onClick={() => void remove(item.id)} />
-            </FormLayout>
+            <HStack gap={2}>
+              <Button label="编辑" size="sm" variant="secondary" onClick={() => openEdit(item)} />
+              <Button label="删除" size="sm" variant="destructive" onClick={() => void remove(item.id)} />
+            </HStack>
           </VStack>
         ))}
-        {visible.length === 0 ? <Text color="secondary">没有符合条件的素材。下面可以新增。</Text> : null}
-        <VStack gap={2}>
-          <Heading level={2}>{form.id ? '编辑素材' : '新增素材'}</Heading>
+        {visible.length === 0 ? <Text color="secondary">没有符合条件的素材。</Text> : null}
+      </VStack>
+      <Dialog
+        isOpen={editorOpen}
+        onOpenChange={(next) => {
+          if (!next) closeEditor()
+        }}
+        purpose="form"
+        width={640}
+        maxHeight="75dvh"
+      >
+        <VStack gap={3}>
+          <DialogHeader title={form.id ? '编辑素材' : '添加素材'} onOpenChange={() => closeEditor()} />
+          <ErrorBanner message={formError} />
           <Selector
             label="类型"
             value={form.type}
@@ -229,7 +271,7 @@ export function LibraryPage() {
           {showHow ? <TextArea label="它是什么 / 怎么运作" value={form.howItWorks} onChange={(value) => setForm({ ...form, howItWorks: value })} rows={4} width="100%" /> : null}
           {showMetrics ? (
             <VStack gap={2}>
-              <Heading level={2}>前后数据</Heading>
+              <Heading level={3}>前后数据</Heading>
               <Text color="secondary">指标名、优化前、优化后、单位、口径。没有客户授权的数字，起草时不会写出来。</Text>
               {form.metrics.map((metric) => (
                 <VStack key={metric.id} gap={2}>
@@ -254,6 +296,7 @@ export function LibraryPage() {
               ))}
               <Button
                 label="添加一组指标"
+                size="sm"
                 variant="secondary"
                 onClick={() =>
                   setForm({
@@ -279,37 +322,30 @@ export function LibraryPage() {
             </VStack>
           ) : null}
           <VStack gap={2}>
-            <Heading level={2}>链接 / 截图</Heading>
+            <Heading level={3}>链接 / 截图</Heading>
             {form.links.map((link) => (
               <FormLayout key={link.id} direction="horizontal">
                 <TextInput label="说明" value={link.label} onChange={(value) => updateLink(link.id, { label: value })} width="100%" />
                 <TextInput label="地址" value={link.url} onChange={(value) => updateLink(link.id, { url: value })} width="100%" />
-                <Button label="移除" variant="ghost" onClick={() => setForm({ ...form, links: form.links.filter((item) => item.id !== link.id) })} />
+                <Button label="移除" size="sm" variant="ghost" onClick={() => setForm({ ...form, links: form.links.filter((item) => item.id !== link.id) })} />
               </FormLayout>
             ))}
             <Button
               label="添加链接"
+              size="sm"
               variant="secondary"
               onClick={() => setForm({ ...form, links: [...form.links, { id: crypto.randomUUID(), label: '', url: '' }] })}
             />
           </VStack>
-          {form.id ? <Text color="secondary">{assetAngles({ ...fakeAsset(form), id: form.id })[0]}</Text> : null}
-          <FormLayout direction="horizontal">
+          {form.id ? <Text color="secondary">{assetAngles(fakeAsset(form))[0]}</Text> : null}
+          <HStack gap={2}>
             <Button label={form.id ? '保存修改' : '加入素材库'} variant="primary" onClick={() => void save()} isLoading={saving} isDisabled={!studioId} />
-            {form.id ? <Button label="取消编辑" variant="ghost" onClick={() => setForm(emptyForm)} /> : null}
-          </FormLayout>
+            <Button label="取消" variant="ghost" onClick={closeEditor} />
+          </HStack>
         </VStack>
-      </VStack>
+      </Dialog>
     </PageFrame>
   )
-
-  function updateMetric(id: string, patch: Partial<CaseMetric>) {
-    setForm((current) => ({ ...current, metrics: current.metrics.map((item) => (item.id === id ? { ...item, ...patch } : item)) }))
-  }
-
-  function updateLink(id: string, patch: Partial<AssetLink>) {
-    setForm((current) => ({ ...current, links: current.links.map((item) => (item.id === id ? { ...item, ...patch } : item)) }))
-  }
 }
 
 function fakeAsset(form: FormState): Asset {
