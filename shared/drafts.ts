@@ -135,8 +135,7 @@ export function copyDraftTitle(title: string): string {
 }
 
 export function formatDraftForCopy(draft: DraftBrief): string {
-  const cites = draft.citeSentences.map((sentence) => `- ${sentence}`).join('\n')
-  return `标题：${draft.title}\n\n${draft.body}\n\n建议被引用的句子：\n${cites}\n\n建议落地网址：\n${draft.urlHint}`
+  return `标题：${draft.title}\n\n${draft.body}`
 }
 
 function titleFor(context: DraftContext): string {

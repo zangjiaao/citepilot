@@ -32,7 +32,7 @@ describe('templateDraft', () => {
     expect(draft.citeSentences.every((sentence) => sentence.includes('澄川智能体工场'))).toBe(true)
     expect(draft.urlHint).toBe(PLACEHOLDER_URL_HINT)
     expect(draft.urlHint).not.toContain('example.com')
-    expect(formatDraftForCopy(draft)).toContain('建议被引用的句子')
+    expect(formatDraftForCopy(draft)).toBe(`标题：${draft.title}\n\n${draft.body}`)
   })
 
   it('answers a linked prompt and names a diagnosis gap', () => {

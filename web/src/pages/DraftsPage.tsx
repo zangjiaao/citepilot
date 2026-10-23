@@ -13,7 +13,6 @@ import { Selector } from '@astryxdesign/core/Selector'
 import { StackItem } from '@astryxdesign/core/Stack'
 import { Table, pixel, proportional } from '@astryxdesign/core/Table'
 import { Text } from '@astryxdesign/core/Text'
-import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import * as stylex from '@stylexjs/stylex'
 import { IMPLANT_LEVELS, IMPLANT_PURPOSE, PUBLISH_PLATFORMS, SOFT_IMPLANT_HINT, platformForAssetType, publishPlatform, type BrandMention, type DraftLength, type PublishPlatformId } from '../../../shared/draftPrompt.ts'
@@ -22,6 +21,7 @@ import { draftImages, type DraftImage } from '../../../shared/draftImages.ts'
 import { recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
 import { ASSET_TYPES, assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
 import { plainTextFromRich } from '../../../shared/richText.ts'
+import { citePlacement } from '../../../shared/citePlacement.ts'
 import { channelLabel, DRAFT_CHANNELS, formatDraftForCopy } from '../../../shared/drafts.ts'
 import { SOURCE_LABEL } from '../../../shared/platforms.ts'
 import type { ContentDraft, Diagnosis, DraftChannel, DraftPreview, Prompt } from '../../../shared/types.ts'
@@ -552,6 +552,32 @@ export function DraftsPage() {
       </VStack>
     )
 
+  const placementBlock = (value: string, question: string, mention?: BrandMention) => {
+    const report = citePlacement({
+      body: value,
+      question,
+      keywords: studio?.keywords ?? [],
+      brand: studio?.name ?? '',
+      website: studio?.website ?? '',
+      mention,
+    })
+    return (
+      <VStack gap={1}>
+        <Text>关键词落在这些位置</Text>
+        {report.lines.length === 0 ? (
+          <Text color="secondary">{report.gap || '正文里还没有对上题目或品牌的词。'}</Text>
+        ) : (
+          report.lines.map((item) => (
+            <Text key={item} color="secondary">
+              {item}
+            </Text>
+          ))
+        )}
+        {report.lines.length > 0 && report.gap ? <Text color="secondary">{report.gap}</Text> : null}
+      </VStack>
+    )
+  }
+
   const generateButton = (
     <Button label="生成草稿" variant="primary" width="100%" onClick={() => void generate()} isLoading={generating} isDisabled={!studioId} />
   )
@@ -761,9 +787,8 @@ export function DraftsPage() {
       />
       <TextInput label="标题" value={editTitle} onChange={setEditTitle} width="100%" />
       {bodyArea({ value: editBody, onChange: setEditBody, images: imageStrip })}
-      <TextArea label="建议被引用的句子" description="一行一句。" value={editCites} onChange={setEditCites} rows={4} width="100%" />
+      {placementBlock(editBody, editing.promptText)}
       {imageList}
-      <TextInput label="建议落地网址" value={editUrl} onChange={setEditUrl} width="100%" />
     </VStack>
   ) : preview ? (
     <VStack gap={3} height="100%" minHeight={0}>
@@ -802,34 +827,8 @@ export function DraftsPage() {
         },
         images: imageStrip,
       })}
-      <TextArea
-        label="建议被引用的句子"
-        description={
-          brandMention === 'light' && promptId
-            ? '一行一句。这些句子要能直接回答上面关联的题目。'
-            : brandMention === 'guide'
-              ? '一行一句。明确种草时可以带上品牌名称。'
-              : '一行一句。抽出故事里的事实，不把品牌名写进引用句。'
-        }
-        value={cites}
-        onChange={(value) => {
-          setCites(value)
-          setSaved(false)
-        }}
-        rows={4}
-        width="100%"
-      />
+      {placementBlock(body, preview.promptText, brandMention)}
       {imageList}
-      <TextInput
-        label="建议落地网址"
-        description="发布时把这段内容放在你自己的这个地址上。"
-        value={urlHint}
-        onChange={(value) => {
-          setUrlHint(value)
-          setSaved(false)
-        }}
-        width="100%"
-      />
     </VStack>
   ) : (
     <VStack gap={3} height="100%" minHeight={0}>
