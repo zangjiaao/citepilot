@@ -21,6 +21,24 @@ export function plainTextFromRich(value: string): string {
     .trim()
 }
 
+export function insertMarkdownSnippet(
+  current: string,
+  snippet: string,
+  start: number,
+  end: number,
+): { value: string; cursor: number } {
+  const length = current.length
+  const safeStart = Math.min(Math.max(start, 0), length)
+  const safeEnd = Math.min(Math.max(end, safeStart), length)
+  const prefix = current.slice(0, safeStart)
+  const suffix = current.slice(safeEnd)
+  const block = snippet.startsWith('![') || snippet.includes('\n')
+  const before = block && prefix.length > 0 && !prefix.endsWith('\n') ? '\n' : ''
+  const after = block && suffix.length > 0 && !suffix.startsWith('\n') ? '\n' : ''
+  const value = `${prefix}${before}${snippet}${after}${suffix}`
+  return { value, cursor: prefix.length + before.length + snippet.length }
+}
+
 export function imageRefsFromHtml(value: string): RichImageRef[] {
   const refs: RichImageRef[] = []
   const seen = new Set<string>()

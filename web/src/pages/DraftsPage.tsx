@@ -26,6 +26,7 @@ import { SOURCE_LABEL } from '../../../shared/platforms.ts'
 import type { ContentDraft, Diagnosis, DraftChannel, DraftPreview, Prompt } from '../../../shared/types.ts'
 import { api } from '../api'
 import { formatTime } from '../format'
+import { MarkdownBodyEditor, type MarkdownBodyEditorHandle } from '../markdownEditor'
 import { useStudio } from '../studio'
 import { ErrorBanner, InfoBanner, PageFrame, WarningBanner } from '../ui'
 
@@ -101,6 +102,7 @@ export function DraftsPage() {
   const [prompts, setPrompts] = useState<Prompt[]>([])
   const [mentions, setMentions] = useState<PromptMention[]>([])
   const appliedRecommendation = useRef('')
+  const editorRef = useRef<MarkdownBodyEditorHandle>(null)
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([])
   const [drafts, setDrafts] = useState<ContentDraft[]>([])
   const [platformId, setPlatformId] = useState<PublishPlatformId>('xiaohongshu')
@@ -487,30 +489,31 @@ export function DraftsPage() {
   const selectedImages = draftImages(
     assetIds.map((id) => assets.find((item) => item.id === id)).filter((item): item is Asset => Boolean(item)),
   )
-  const insertImage = (image: DraftImage, target: 'preview' | 'edit') => {
-    const line = `![${image.alt || image.label}](${image.url})`
-    const area = document.querySelector('.citepilot-draft-body textarea') as HTMLTextAreaElement | null
-    const current = target === 'edit' ? editBody : body
-    const start = area?.selectionStart ?? current.length
-    const end = area?.selectionEnd ?? current.length
-    const prefix = current.slice(0, start)
-    const suffix = current.slice(end)
-    const before = prefix && !prefix.endsWith('\n') ? '\n' : ''
-    const after = suffix && !suffix.startsWith('\n') ? '\n' : ''
-    const next = `${prefix}${before}${line}${after}${suffix}`
-    if (target === 'edit') setEditBody(next)
-    else {
-      setBody(next)
-      setSaved(false)
-    }
+  const uploadImage = async (file: File) => {
+    if (!studioId) throw new Error('先选择品牌')
+    const form = new FormData()
+    form.set('file', file)
+    const response = await fetch(`/api/studios/${studioId}/media`, { method: 'POST', body: form })
+    const data = (await response.json().catch(() => ({}))) as { error?: string; url?: string }
+    if (!response.ok || !data.url) throw new Error(data.error || '图片没有上传')
+    return data.url
   }
-  const imageStrip = (target: 'preview' | 'edit') =>
+  const insertImage = (image: DraftImage) => {
+    editorRef.current?.insert(`![${image.alt || image.label}](${image.url})`)
+  }
+  const imageStrip =
     selectedImages.length === 0 ? null : (
       <div className="citepilot-draft-images">
         <Text color="secondary">本稿可用图片。点一下，把这张图插进正文。</Text>
         <div className="citepilot-draft-thumbs">
           {selectedImages.map((image) => (
-            <button key={image.key} type="button" className="citepilot-draft-thumb" onClick={() => insertImage(image, target)}>
+            <button
+              key={image.key}
+              type="button"
+              className="citepilot-draft-thumb"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => insertImage(image)}
+            >
               <img src={image.url} alt={image.alt || image.label} />
               <span>{image.label}</span>
             </button>
@@ -518,7 +521,7 @@ export function DraftsPage() {
         </div>
       </div>
     )
-  const imageList = (target: 'preview' | 'edit') =>
+  const imageList =
     selectedImages.length === 0 ? null : (
       <VStack gap={1}>
         <Text color="secondary">本稿可用图片</Text>
@@ -528,7 +531,7 @@ export function DraftsPage() {
             size="sm"
             variant="ghost"
             label={`${image.label}${image.alt ? ` ${image.alt}` : ''}`}
-            onClick={() => insertImage(image, target)}
+            onClick={() => insertImage(image)}
           />
         ))}
       </VStack>
@@ -699,8 +702,15 @@ export function DraftsPage() {
 
   const bodyArea = (props: { value: string; onChange: (value: string) => void; images?: ReactNode }) => (
     <StackItem size="fill" xstyle={styles.fill}>
+      <Text>正文</Text>
       <div className="citepilot-draft-body">
-        <TextArea label="正文" value={props.value} onChange={props.onChange} rows={8} width="100%" />
+        <MarkdownBodyEditor
+          ref={editorRef}
+          value={props.value}
+          onChange={props.onChange}
+          onUpload={uploadImage}
+          placeholder="用 Markdown 写正文。点下方图片，会在光标处插入 ![](地址)。"
+        />
       </div>
       {props.images}
     </StackItem>
@@ -732,9 +742,9 @@ export function DraftsPage() {
         }}
       />
       <TextInput label="标题" value={editTitle} onChange={setEditTitle} width="100%" />
-      {bodyArea({ value: editBody, onChange: setEditBody, images: imageStrip('edit') })}
+      {bodyArea({ value: editBody, onChange: setEditBody, images: imageStrip })}
       <TextArea label="建议被引用的句子" description="一行一句。" value={editCites} onChange={setEditCites} rows={4} width="100%" />
-      {imageList('edit')}
+      {imageList}
       <TextInput label="建议落地网址" value={editUrl} onChange={setEditUrl} width="100%" />
     </VStack>
   ) : preview ? (
@@ -778,7 +788,7 @@ export function DraftsPage() {
           setBody(value)
           setSaved(false)
         },
-        images: imageStrip('preview'),
+        images: imageStrip,
       })}
       <TextArea
         label="建议被引用的句子"
@@ -797,7 +807,7 @@ export function DraftsPage() {
         rows={4}
         width="100%"
       />
-      {imageList('preview')}
+      {imageList}
       <TextInput
         label="建议落地网址"
         description="发布时把这段内容放在你自己的这个地址上。"
@@ -908,7 +918,7 @@ export function DraftsPage() {
           }
         />
       </Dialog>
-      <style>{`.citepilot-draft-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}.citepilot-draft-body>div{flex:1 1 auto;min-height:0;height:100%}.citepilot-draft-body>div>div:last-child{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}.citepilot-draft-body>div>div:last-child>div{flex:1 1 auto;min-height:120px;display:flex;flex-direction:column}.citepilot-draft-body textarea{flex:1 1 auto;min-height:0;height:auto;resize:none}.citepilot-draft-images{display:flex;flex-direction:column;gap:8px;margin-top:8px}.citepilot-draft-thumbs{display:flex;flex-wrap:wrap;gap:8px}.citepilot-draft-thumb{display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px;border:1px solid #d7d7d7;background:#fff;cursor:pointer}.citepilot-draft-thumb img{width:88px;height:64px;object-fit:cover;display:block;background:#f3f3f3}`}</style>
+      <style>{`.citepilot-draft-body{flex:1 1 auto;min-height:280px;display:flex;flex-direction:column}.citepilot-draft-images{display:flex;flex-direction:column;gap:8px;margin-top:8px}.citepilot-draft-thumbs{display:flex;flex-wrap:wrap;gap:8px}.citepilot-draft-thumb{display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px;border:1px solid #d7d7d7;background:#fff;cursor:pointer}.citepilot-draft-thumb img{width:88px;height:64px;object-fit:cover;display:block;background:#f3f3f3}`}</style>
     </PageFrame>
   )
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { emptyDetails, type Asset } from '../shared/assets.ts'
 import { assembleDraftPrompt, materialDraft, rewriteGenericSentences } from '../shared/draftPrompt.ts'
 import { backfillDraftImages, draftImages } from '../shared/draftImages.ts'
+import { insertMarkdownSnippet } from '../shared/richText.ts'
 import { blankBrandProfile } from '../shared/brandProfile.ts'
 import type { Studio } from '../shared/types.ts'
 
@@ -77,5 +78,13 @@ describe('draft images', () => {
     const kept = rewriteGenericSentences(draft.body, [pictured], false)
     expect(kept.body).toContain('![手册页](/api/media/studio-chengchuan/abcd1234.jpg)')
     expect(kept.body).not.toContain('【待补充')
+  })
+
+  it('inserts an image markdown line at the cursor', () => {
+    const placed = insertMarkdownSnippet('先写变化。后面还有。', '![手册页](/api/media/studio-chengchuan/abcd1234.jpg)', 5, 5)
+    expect(placed.value).toBe('先写变化。\n![手册页](/api/media/studio-chengchuan/abcd1234.jpg)\n后面还有。')
+    expect(placed.cursor).toBe('先写变化。\n![手册页](/api/media/studio-chengchuan/abcd1234.jpg)'.length)
+    const appended = insertMarkdownSnippet('先写变化。', '![手册页](/api/media/studio-chengchuan/abcd1234.jpg)', 6, 6)
+    expect(appended.value).toBe('先写变化。\n![手册页](/api/media/studio-chengchuan/abcd1234.jpg)')
   })
 })

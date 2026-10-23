@@ -1,37 +1,66 @@
-import { useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import MDEditor, { commands, type ICommand } from '@uiw/react-md-editor'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/Layout'
+import { insertMarkdownSnippet } from '../../shared/richText.ts'
 
-export function MarkdownBodyEditor({
-  value,
-  onChange,
-  onUpload,
-}: {
-  value: string
-  onChange: (markdown: string) => void
-  onUpload: (file: File) => Promise<string>
-}) {
+export interface MarkdownBodyEditorHandle {
+  insert: (snippet: string) => void
+}
+
+export const MarkdownBodyEditor = forwardRef<
+  MarkdownBodyEditorHandle,
+  {
+    value: string
+    onChange: (markdown: string) => void
+    onUpload?: (file: File) => Promise<string>
+    placeholder?: string
+  }
+>(function MarkdownBodyEditor({ value, onChange, onUpload, placeholder }, ref) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const valueRef = useRef(value)
   const onChangeRef = useRef(onChange)
+  const onUploadRef = useRef(onUpload)
   const selectionRef = useRef<{ start: number; end: number } | null>(null)
+  const pendingCursor = useRef<number | null>(null)
   const [hint, setHint] = useState('')
   const [uploading, setUploading] = useState(false)
   valueRef.current = value
   onChangeRef.current = onChange
+  onUploadRef.current = onUpload
 
-  const insert = (snippet: string) => {
-    const current = valueRef.current
-    const range = selectionRef.current
-    const start = range?.start ?? current.length
-    const end = range?.end ?? current.length
-    const next = `${current.slice(0, start)}${snippet}${current.slice(end)}`
-    onChangeRef.current(next)
-    selectionRef.current = { start: start + snippet.length, end: start + snippet.length }
+  const rememberSelection = (target: HTMLTextAreaElement) => {
+    selectionRef.current = { start: target.selectionStart, end: target.selectionEnd }
   }
 
+  const insert = (snippet: string) => {
+    const area = rootRef.current?.querySelector('textarea') ?? null
+    const current = valueRef.current
+    const focused = area && document.activeElement === area
+    const start = focused ? area.selectionStart : (selectionRef.current?.start ?? current.length)
+    const end = focused ? area.selectionEnd : (selectionRef.current?.end ?? current.length)
+    const next = insertMarkdownSnippet(current, snippet, start, end)
+    selectionRef.current = { start: next.cursor, end: next.cursor }
+    pendingCursor.current = next.cursor
+    onChangeRef.current(next.value)
+  }
+
+  useImperativeHandle(ref, () => ({ insert }), [])
+
+  useEffect(() => {
+    const cursor = pendingCursor.current
+    if (cursor == null) return
+    pendingCursor.current = null
+    const area = rootRef.current?.querySelector('textarea')
+    if (!area) return
+    area.focus()
+    area.setSelectionRange(cursor, cursor)
+  }, [value])
+
   const uploadFiles = async (files: File[]) => {
+    const upload = onUploadRef.current
+    if (!upload) return
     const images = files.filter((file) => file.type.startsWith('image/'))
     if (images.length === 0) return
     setHint('')
@@ -39,7 +68,7 @@ export function MarkdownBodyEditor({
     try {
       const lines: string[] = []
       for (const file of images) {
-        const url = await onUpload(file)
+        const url = await upload(file)
         const alt = file.name.replace(/\.[^.]+$/, '').replace(/[[\]]/g, '')
         lines.push(`![${alt}](${url})`)
       }
@@ -61,9 +90,12 @@ export function MarkdownBodyEditor({
     },
   }
 
+  const placeholderText =
+    placeholder ?? (onUpload ? '用 Markdown 写。标题、列表、链接都可以，也可以粘贴图片。' : '用 Markdown 写。标题、列表、链接都可以。')
+
   return (
     <VStack gap={2} height="100%" minHeight={0}>
-      <div className="citepilot-md" data-color-mode="light">
+      <div ref={rootRef} className="citepilot-md" data-color-mode="light">
         <MDEditor
           value={value}
           preview="live"
@@ -72,42 +104,55 @@ export function MarkdownBodyEditor({
           visibleDragbar={false}
           highlightEnable={false}
           textareaProps={{
-            placeholder: '用 Markdown 写。标题、列表、链接都可以，也可以粘贴图片。',
+            placeholder: placeholderText,
+            onSelect: (event) => rememberSelection(event.currentTarget),
+            onKeyUp: (event) => rememberSelection(event.currentTarget),
+            onClick: (event) => rememberSelection(event.currentTarget),
+            onBlur: (event) => rememberSelection(event.currentTarget),
             onPaste: (event) => {
+              if (!onUploadRef.current) return
               const files = [...(event.clipboardData?.files ?? [])]
               if (!files.some((file) => file.type.startsWith('image/'))) return
-              const target = event.currentTarget
-              selectionRef.current = { start: target.selectionStart, end: target.selectionEnd }
+              rememberSelection(event.currentTarget)
               event.preventDefault()
               void uploadFiles(files)
             },
             onDrop: (event) => {
+              if (!onUploadRef.current) return
               const files = [...(event.dataTransfer?.files ?? [])]
               if (!files.some((file) => file.type.startsWith('image/'))) return
-              const target = event.currentTarget
-              selectionRef.current = { start: target.selectionStart, end: target.selectionEnd }
+              rememberSelection(event.currentTarget)
               event.preventDefault()
               void uploadFiles(files)
             },
           }}
-          commandsFilter={(command) => (command.keyCommand === 'image' ? uploadCommand : command)}
-          onChange={(next) => onChange(next ?? '')}
+          commandsFilter={(command) => {
+            if (command.keyCommand !== 'image') return command
+            return onUpload ? uploadCommand : false
+          }}
+          onChange={(next, event) => {
+            if (event?.currentTarget) rememberSelection(event.currentTarget)
+            onChange(next ?? '')
+          }}
         />
       </div>
-      <input
-        id="library-image-input"
-        ref={fileRef}
-        type="file"
-        accept="image/png,image/jpeg,image/gif,image/webp"
-        hidden
-        onChange={(event) => {
-          const files = [...(event.target.files ?? [])]
-          void uploadFiles(files)
-        }}
-      />
-      <Text color="secondary">{uploading ? '正在上传图片。' : '左侧写 Markdown，右侧是预览。图片会上传后再写成 ![](地址)。'}</Text>
+      {onUpload ? (
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          hidden
+          onChange={(event) => {
+            const files = [...(event.target.files ?? [])]
+            void uploadFiles(files)
+          }}
+        />
+      ) : null}
+      <Text color="secondary">
+        {uploading ? '正在上传图片。' : onUpload ? '左侧写 Markdown，右侧是预览。图片会上传后再写成 ![](地址)。' : '左侧写 Markdown，右侧是预览。'}
+      </Text>
       {hint ? <Text color="secondary">{hint}</Text> : null}
       <style>{`.citepilot-md{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;height:100%}.citepilot-md .w-md-editor{flex:1 1 auto;min-height:240px;height:100%;box-shadow:none}.citepilot-md .w-md-editor-content{flex:1 1 auto;height:auto;min-height:0}`}</style>
     </VStack>
   )
-}
+})
