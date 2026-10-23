@@ -325,7 +325,7 @@ export function DraftsPage() {
     setError('')
     setNotice('')
     try {
-      const result = await api<{ draft: DraftPreview; gaps?: string[]; flags?: string[] }>(`/api/studios/${studioId}/drafts/generate`, {
+      const result = await api<{ draft: DraftPreview; gaps?: string[]; flags?: string[]; warning?: string }>(`/api/studios/${studioId}/drafts/generate`, {
         method: 'POST',
         body: JSON.stringify({
           channel,
@@ -350,7 +350,13 @@ export function DraftsPage() {
       setMissing(result.gaps ?? [])
       setFlags(result.flags ?? [])
       setSaved(false)
-      setNotice(result.draft.source === 'deepseek' ? '模型按品牌资料改写了这篇草稿。' : '已按品牌资料套用模板。请先核对，再复制到你自己的站点。')
+      setNotice(
+        result.warning
+          ? result.warning
+          : result.draft.source === 'deepseek'
+            ? '模型按品牌资料改写了这篇草稿。'
+            : '已按品牌资料套用模板。请先核对，再复制到你自己的站点。',
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : '生成失败')
     } finally {
@@ -612,7 +618,7 @@ export function DraftsPage() {
           ? '不植入：不把题目写进正文，也不强行带品牌。'
           : brandMention === 'light'
             ? '软植入：把相关题目的答案写进故事，引用句能直接回答它。结尾轻轻留下一次品牌名或真实官网。'
-            : '明确种草：题目可写可不写。结尾会写出品牌、官网和下一步。'}
+            : '明确种草：篇幅与软植入相同。结尾单独成段，写出品牌、官网和下一步。'}
       </Text>
       {brandMention !== 'none' ? (
         <Selector

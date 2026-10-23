@@ -9,7 +9,7 @@ import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.t
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
-import { applyBrandMention, assembleDraftPrompt, channelForContentType, isContentType, materialDraft, paceDraftBody, paragraphLimit, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, channelForContentType, finishDraftBody, isContentType, isPublishableDraft, materialDraft, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
 import { backfillDraftImages, draftImages } from '../shared/draftImages.ts'
 import { relatedDraftPrompts } from '../shared/recommendDraft.ts'
 import { readAssetDraft } from '../shared/assets.ts'
@@ -613,7 +613,9 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
       ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention, options.brandMention === 'none' ? '' : promptText, options.contentType)
       : templateDraft(context)
   let source: DraftPreview['source'] = 'template'
+  let warning = ''
   const writer = await resolveLlm(c.env.DB, c.env, 'generate')
+  const fallbackWarning = '模型这次没有写成完整稿，下面是按素材整理的底稿，不是终稿。可以再点一次生成。'
   if (writer.enabled) {
     try {
       const prompt = assembleDraftPrompt(
@@ -622,15 +624,23 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
         { promptText, gapLabel, gapDetail, channelLabel: channelLabel(channel) },
         selected,
       )
-      const raw = await completeJson(writer, prompt.system, `${prompt.user}\n底稿：${JSON.stringify(brief)}\n把勾选的素材合成一篇，先写客户侧的变化。`, 0.4)
+      const raw = await completeJson(
+        writer,
+        prompt.system,
+        `${prompt.user}\n素材摘录（不要原样交回）：${JSON.stringify(brief)}\n把勾选的素材写成完整的一篇，先写客户侧的变化。明确种草也按同样篇幅写，不要缩短成广告短帖。`,
+        0.4,
+      )
       const accepted = acceptDraft(raw, studio.name, options.brandMention)
-      if (accepted) {
+      if (accepted && isPublishableDraft(accepted.body, options.contentType)) {
         brief = { ...accepted, urlHint: coerceUrlHint(accepted.urlHint, studio.website, channelMeta?.path ?? '/') }
         source = 'deepseek'
+      } else {
+        warning = fallbackWarning
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(JSON.stringify({ message: 'draft text fell back', error: message }))
+      warning = fallbackWarning
     }
   }
   let polished = rewriteGenericSentences(brief.body, selected, options.allowBragging)
@@ -652,10 +662,15 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     }
     polished = rewriteGenericSentences(brief.body, selected, options.allowBragging)
   }
-  brief = applyBrandMention({ ...brief, body: polished.body }, studio.name, studio.website, options.brandMention)
+  brief = applyBrandMention(
+    { ...brief, body: backfillDraftImages(polished.body, draftImages(selected)) },
+    studio.name,
+    studio.website,
+    options.brandMention,
+  )
   brief = {
     ...brief,
-    body: paceDraftBody(backfillDraftImages(brief.body, draftImages(selected)), paragraphLimit(options.contentType)),
+    body: finishDraftBody(brief.body, studio.name, studio.website, options.brandMention, options.contentType),
     urlHint: coerceUrlHint(brief.urlHint, studio.website, channelMeta?.path ?? '/'),
   }
   const gaps = profileGaps(studio, options, selected)
@@ -671,7 +686,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     gapLabel,
   }
   console.log(JSON.stringify({ message: 'draft generated', channel, source, gaps: gaps.length, flags: polished.flags.length }))
-  return c.json({ draft, gaps, flags: polished.flags })
+  return c.json({ draft, gaps, flags: polished.flags, warning })
 })
 
 app.post('/api/studios/:id/drafts', async (c) => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyBrandPageSave, blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { emptyDetails, readAssetDraft, type Asset } from '../shared/assets.ts'
-import { applyBrandMention, assembleDraftPrompt, IMPLANT_LEVELS, IMPLANT_PURPOSE, materialDraft, NO_FABRICATION_RULE, paceDraftBody, PARAGRAPH_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, finishDraftBody, guideCloser, IMPLANT_LEVELS, IMPLANT_PURPOSE, isPublishableDraft, materialDraft, NO_FABRICATION_RULE, paceDraftBody, PARAGRAPH_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -128,7 +128,18 @@ describe('assembleDraftPrompt', () => {
       [metricAsset],
     )
     expect(prompt.system).toContain('明确种草')
+    expect(prompt.system).toContain('正文长度与软植入相同')
+    expect(prompt.system).toContain('不要因为种草就缩短成广告短帖')
     expect(prompt.system).toContain('下一步')
+    expect(prompt.system).toContain(PARAGRAPH_RULE)
+    const sameLength = { audience: '', contentType: 'wechat' as const, tone: '', length: 'medium' as const, allowBragging: false }
+    const lightPrompt = assembleDraftPrompt(studio, { ...sameLength, brandMention: 'light' }, { channelLabel: '公众号' }, [metricAsset])
+    const guidePrompt = assembleDraftPrompt(studio, { ...sameLength, brandMention: 'guide' }, { channelLabel: '公众号' }, [metricAsset])
+    expect(guidePrompt.user).toContain('900 到 2000')
+    expect(lightPrompt.user).toContain('900 到 2000')
+    expect(guidePrompt.system).toContain('平台格式（公众号）')
+    expect(lightPrompt.system).toContain('平台格式（公众号）')
+    expect(guidePrompt.user).toContain('不要原样交回底稿')
   })
 })
 
@@ -193,7 +204,8 @@ describe('implant intensity', () => {
     expect(draft.citeSentences.every((item) => !item.includes(studio.name))).toBe(true)
     expect(draft.urlHint).toBe('https://www.oak-studio.org/guides/how-we-deliver')
     const quiet = materialDraft(studio, [metricAsset], '/faq', 'light')
-    expect(quiet.body).toContain('当时卡住的是')
+    expect(quiet.body).toContain('维修手册散落')
+    expect(quiet.body).not.toContain('当时卡住的是')
     expect(quiet.body.trim().endsWith(closer)).toBe(true)
     expect(quiet.body.split(studio.name).length - 1).toBe(1)
     expect(quiet.urlHint).toBe('https://www.oak-studio.org/faq')
@@ -233,6 +245,45 @@ describe('implant intensity', () => {
     expect(blank.body.trim().endsWith(closer)).toBe(true)
     expect(blank.body).not.toContain('example.com')
     expect(blank.body).not.toContain('立即咨询')
+  })
+
+  it('keeps a guide draft as long as the soft implant and puts the closer on its own paragraph', () => {
+    const onboarding: Asset = {
+      ...metricAsset,
+      id: 'onboard',
+      type: 'case',
+      title: '企业员工入职引导Agent',
+      body: '企业员工入职引导 Agent企业需要花费精力给员工培训公司制度。',
+      details: {
+        ...emptyDetails(),
+        problem: '企业需要花费精力给员工培训公司制度',
+        approach: '通过RAG方式收集公司制度',
+        howItWorks: '我们通过 RAG 方式收集公司制度，AI 会帮助新入职员工了解企业制度',
+      },
+    }
+    const light = materialDraft(studio, [onboarding], '/insights', 'light', '', 'wechat')
+    const guide = materialDraft(studio, [onboarding], '/insights', 'guide', '', 'wechat')
+    const closer = guideCloser(studio.name, studio.website)
+    const withoutCloser = (body: string, ending: string) => body.trim().slice(0, Math.max(0, body.trim().length - ending.length)).replace(/\s+/g, '')
+    expect(withoutCloser(guide.body, closer).length).toBeGreaterThanOrEqual(withoutCloser(light.body, softCloser(studio.name, studio.website)).length)
+    expect(guide.body.trim().endsWith(closer)).toBe(true)
+    expect(guide.body.trim().slice(0, -closer.length).endsWith('\n\n')).toBe(true)
+    expect(guide.body).not.toContain('案例：')
+    expect(guide.body.replace(/\s+/g, '').split('企业员工入职引导').length - 1).toBe(1)
+    expect(guide.body.replace(/\s+/g, '').split('通过RAG方式收集公司制度').length - 1).toBe(1)
+    const glued = '通过RAG方式收集公司制度想看具体做法，可以从 橡树智能体工作室 的公开说明开始：https://www.oak-studio.org/'
+    const repaired = finishDraftBody(`${onboarding.details.problem}。\n\n${onboarding.details.howItWorks}。\n\n${glued}`, studio.name, studio.website, 'guide', 'wechat')
+    expect(repaired.trim().slice(0, -closer.length).endsWith('\n\n')).toBe(true)
+    expect(repaired).not.toMatch(/制度想看具体做法/)
+    expect(isPublishableDraft(glued, 'wechat')).toBe(false)
+    expect(isPublishableDraft(guide.body, 'wechat')).toBe(false)
+    const full = `${'客户的查询从翻手册变成点开出处。'.repeat(20)}\n\n${closer}`
+    expect(isPublishableDraft(full, 'wechat')).toBe(true)
+    expect(isPublishableDraft(full, 'short-post')).toBe(true)
+    const placeholder = materialDraft({ ...studio, website: 'https://example.com' }, [metricAsset, ideaAsset], '/insights', 'light', '', 'wechat')
+    expect(placeholder.body.split(studio.name).length - 1).toBe(1)
+    expect(placeholder.body.trim().endsWith(studio.name)).toBe(true)
+    expect(placeholder.body).not.toContain('example.com')
   })
 })
 

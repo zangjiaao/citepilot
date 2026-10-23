@@ -54,7 +54,7 @@ const HARD_SELL =
 export const IMPLANT_LEVELS = [
   { id: 'none', label: '不植入', description: '不把题目写进正文，也不强行带品牌。' },
   { id: 'light', label: '软植入', description: '把相关题目的答案写进故事，结尾轻轻留下品牌名或真实官网。' },
-  { id: 'guide', label: '明确种草', description: '题目可写可不写。结尾会更明确地写出品牌、官网和下一步。' },
+  { id: 'guide', label: '明确种草', description: '题目可写可不写。篇幅与软植入相同，结尾单独写出品牌、官网和下一步。' },
 ] as const
 
 export const IMPLANT_PURPOSE = '为了让相关题目更容易被 AI 引用：故事里写出能对上这道题的事实，并轻轻留下品牌或官网。正文仍以素材故事为主。'
@@ -240,6 +240,7 @@ export function assembleDraftPrompt(
     `禁用词：${studio.bannedWords || '无'}`,
     `不能说的内容：${studio.compliance || '不要承诺素材里没有的效果'}`,
     questionLine,
+    '底稿如果附在后面，只作事实核对。不要原样交回底稿，不要写成「案例：标题」这种字段罗列。篇幅按上面的长度写完整的一篇。',
     `诊断缺口：${extra.gapLabel || '无'} ${extra.gapDetail || ''}`.trim(),
   ].join('\n')
   return { system, user }
@@ -285,6 +286,45 @@ export function softCloser(brand: string, website: string): string {
   return ''
 }
 
+export function guideCloser(brand: string, website: string): string {
+  const name = brand.trim()
+  const site = website.trim()
+  if (!name) return ''
+  return site ? `想看具体做法，可以从 ${name} 的公开说明开始：${site}` : `想看具体做法，可以从 ${name} 的公开说明开始。`
+}
+
+function stripImplantClosers(body: string): string {
+  return body
+    .replace(/具体做法可以看\s*\S[^\n。]*/g, '')
+    .replace(/想看具体做法，可以从\s*\S[^\n。]*/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+export function finishDraftBody(body: string, brand: string, website: string, mention: BrandMention, contentType: string): string {
+  const closer = mention === 'guide' ? guideCloser(brand, website) : mention === 'light' ? softCloser(brand, website) : ''
+  let story = stripImplantClosers(body)
+  if (closer) {
+    const parts = story.split(/\n\n+/).map((item) => item.trim()).filter(Boolean)
+    while (parts.length > 0 && parts[parts.length - 1] === closer) parts.pop()
+    story = parts.join('\n\n')
+  }
+  const paced = paceDraftBody(story, paragraphLimit(contentType)).trim()
+  if (!closer) return paced
+  if (!paced || paced === closer) return closer
+  if (paced.endsWith(`\n\n${closer}`)) return paced
+  return `${paced}\n\n${closer}`
+}
+
+export function isPublishableDraft(body: string, contentType: string): boolean {
+  const story = stripImplantClosers(body).replace(/\s+/g, '')
+  if (!story || /(?:案例|产品|巧思|交互细节|数据成效|客户评价|踩坑经验|参考资料)：/.test(story)) return false
+  if (contentType === 'thread') return stripImplantClosers(body).split(/\n\n+/).filter(Boolean).length >= 4
+  if (contentType === 'short-post') return story.length >= 180
+  return story.length >= 320
+}
+
 export function applyBrandMention(brief: DraftBrief, brand: string, website: string, mention: BrandMention): DraftBrief {
   if (mention === 'light') {
     const closer = softCloser(brand, website)
@@ -306,8 +346,9 @@ export function applyBrandMention(brief: DraftBrief, brand: string, website: str
     return { ...brief, body, citeSentences: padded.slice(0, 5) }
   }
   if (mention === 'guide') {
-    const line = `想看具体做法，可以从 ${brand} 的公开说明开始：${website}`
-    return { ...brief, body: brief.body.includes(brand) ? brief.body : `${brief.body.trim()}\n\n${line}` }
+    const line = guideCloser(brand, website)
+    const cleaned = stripImplantClosers(brief.body)
+    return { ...brief, body: line ? `${cleaned}\n\n${line}` : cleaned }
   }
   const body = stripBrand(brief.body, brand)
   const citeSentences = brief.citeSentences.map((item) => stripBrand(item, brand)).filter((item) => item.length >= 12)
@@ -391,6 +432,8 @@ export function paceDraftBody(body: string, maxSentences = 4): string {
         continue
       }
       for (const sentence of splitSentences(piece.text)) {
+        const previous = sentences[sentences.length - 1]
+        if (previous && !/[。！？]$/.test(previous)) flushSentences()
         sentences.push(sentence)
         if (sentences.length >= cap) flushSentences()
       }
@@ -416,9 +459,9 @@ export function materialDraft(
   let citeSentences = base.citeSentences
   if (answers[0]) body = weaveMid(body, answers[0])
   if (mention === 'light' && answers.length >= 2) citeSentences = answers
-  else if (mention === 'light' && !linked) {
+  if ((mention === 'light' || mention === 'guide') && !linked) {
     const aside = softAside(assets, body)
-    if (aside) body = `${body.trim()}\n\n${aside}`
+    if (aside && !body.includes(aside)) body = `${body.trim()}\n\n${aside}`
   }
   const mentioned = applyBrandMention(
     { ...base, body, citeSentences, urlHint: coerceUrlHint(base.urlHint, studio.website, channelPath) },
@@ -426,7 +469,10 @@ export function materialDraft(
     studio.website,
     mention,
   )
-  return { ...mentioned, body: paceDraftBody(withDraftImages(mentioned.body, assets), paragraphLimit(contentType)) }
+  return {
+    ...mentioned,
+    body: finishDraftBody(withDraftImages(mentioned.body, assets), studio.name, studio.website, mention, contentType),
+  }
 }
 
 function implantRule(mention: BrandMention, promptText: string | undefined, brand: string, website: string): string {
@@ -445,7 +491,8 @@ function implantRule(mention: BrandMention, promptText: string | undefined, bran
   const optional = promptText?.trim()
     ? `若带了题目，只在故事中段回答，不要当标题：${promptText.trim()}。`
     : '题目可选。没有题目时不要编问答。'
-  return `植入强度：明确种草。读者有意了解品牌时再用。正文仍从客户问题或素材细节写起，结尾写出品牌名、官网和一句下一步。这比软植入更直接。${optional}不要用行业领先、立即咨询、赋能数字化或一眼广告腔。`
+  const ending = guideCloser(brand, website)
+  return `植入强度：明确种草。正文长度与软植入相同，不要因为种草就缩短成广告短帖，也不要交回素材字段罗列。按平台格式写成完整的一篇，先写客户的问题、前后数据或一处细节。结尾单独成段，写出品牌名、官网和一句下一步${ending ? `：${ending}` : ''}。这比软植入更直接，只是收束更明确。${optional}不要用行业领先、立即咨询、赋能数字化或一眼广告腔。`
 }
 
 function answerCites(assets: Asset[]): string[] {
@@ -475,9 +522,10 @@ function softAside(assets: Asset[], body: string): string {
     .find((item) => item && !body.includes(item))
   if (detail) return `具体到做法上，${detail.endsWith('。') ? detail : `${detail}。`}`
   const second = assets[1]?.title.trim()
-  if (second) return `同一件事里还有一处可以核对：${second}。`
+  if (second && !body.includes(second)) return `同一件事里还有一处可以核对：${second}。`
   const problem = assets.map((item) => item.details.problem.trim()).find(Boolean)
-  return problem ? `当时卡住的是：${problem.endsWith('。') ? problem : `${problem}。`}` : ''
+  if (problem && !body.includes(problem)) return `当时卡住的是：${problem.endsWith('。') ? problem : `${problem}。`}`
+  return ''
 }
 
 function stripLightPromo(text: string, brand: string, website: string): string {

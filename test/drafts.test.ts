@@ -110,20 +110,21 @@ describe('parseDraftEdit', () => {
 })
 
 describe('acceptDraft', () => {
-  it('drops model output that is too thin or omits the brand', () => {
+  it('drops model output that is too thin and keeps a long guide draft before the closer is attached', () => {
     expect(acceptDraft({ title: '短', body: '太短', citeSentences: [], urlHint: '' }, studio.name)).toBeNull()
     const longBody = `${'没有品牌名的说明。'.repeat(12)}`
-    expect(
-      acceptDraft(
-        {
-          title: '一份看起来完整的草稿标题',
-          body: longBody,
-          citeSentences: ['这句话没有品牌。', '另一句也没有。'],
-          urlHint: 'https://example.com/product',
-        },
-        studio.name,
-      ),
-    ).toBeNull()
+    const accepted = acceptDraft(
+      {
+        title: '一份看起来完整的草稿标题',
+        body: longBody,
+        citeSentences: ['这句话没有品牌名但足够长。', '另一句也把事实写清楚了。'],
+        urlHint: 'https://example.com/product',
+      },
+      studio.name,
+      'guide',
+    )
+    expect(accepted?.body).toBe(longBody)
+    expect(accepted?.citeSentences).toHaveLength(2)
   })
 
   it('keeps a model draft that stays inside the studio facts', () => {

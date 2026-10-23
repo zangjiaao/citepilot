@@ -171,26 +171,70 @@ export function assetBlock(asset: Asset): string {
     .join('\n')
 }
 
+function normFact(text: string): string {
+  return text
+    .replace(/\s+/g, '')
+    .replace(/[。！？，,、：:「」"'“”]/g, '')
+    .replace(/^做法上/, '')
+    .toLowerCase()
+}
+
+function asSentence(text: string): string {
+  const trimmed = text.replace(/\s+/g, ' ').trim()
+  if (!trimmed) return ''
+  return /[。！？]$/.test(trimmed) ? trimmed : `${trimmed}。`
+}
+
+function leftover(text: string, parts: string[]): number {
+  let rest = normFact(text)
+  for (const part of parts) {
+    const key = normFact(part)
+    if (key.length >= 4) rest = rest.split(key).join('')
+  }
+  return rest.length
+}
+
+function rememberFact(sentence: string, kept: string[]) {
+  const key = normFact(sentence)
+  if (key.length < 4) return
+  const index = kept.findIndex((item) => {
+    const other = normFact(item)
+    return other === key || other.includes(key) || key.includes(other)
+  })
+  if (index === -1) {
+    kept.push(sentence)
+    return
+  }
+  if (key.length > normFact(kept[index] ?? '').length + 6) kept[index] = sentence
+}
+
 export function draftFromAssets(studio: Studio, assets: Asset[], channelPath: string, mention: BrandMention): DraftBrief {
   const metric = assets.flatMap((item) => authorizedMetrics(item.details))[0]
-  const problem = assets.map((item) => item.details.problem.trim()).find(Boolean)
-  const firstBody = assets[0] ? plainTextFromRich(assets[0].body) : ''
+  const problem = assets.map((item) => item.details.problem.trim()).find(Boolean) ?? ''
+  const kept: string[] = []
   const opener = metric
-    ? `客户的${metric.name}从 ${metric.before}${metric.unit} 变成 ${metric.after}${metric.unit}。${problem ?? ''}`.trim()
-    : problem || firstBody || `【待补充：从素材库补上客户当时的具体问题】`
-  const sections = [
-    opener,
-    '',
-    ...assets.flatMap((item) => {
-      const lines = [`${assetTypeLabel(item.type)}：${item.title}`, plainTextFromRich(item.body)]
-      if (item.details.approach.trim()) lines.push(item.details.approach.trim())
-      if (item.details.howItWorks.trim()) lines.push(item.details.howItWorks.trim())
-      for (const entry of authorizedMetrics(item.details)) lines.push(formatMetric(entry))
-      if (item.details.quoteAuthorized && item.details.quote.trim()) lines.push(`客户原话：「${item.details.quote.trim()}」`)
-      return lines.filter(Boolean)
-    }),
-    mention === 'guide' ? `想看具体做法，可以从 ${studio.name} 的公开说明开始：${studio.website}` : '',
-  ].filter((part) => part !== '')
+    ? `客户的${metric.name}从 ${metric.before}${metric.unit} 变成 ${metric.after}${metric.unit}`
+    : problem || `【待补充：从素材库补上客户当时的具体问题】`
+  rememberFact(asSentence(opener), kept)
+  if (problem) rememberFact(asSentence(problem), kept)
+  for (const item of assets) {
+    const body = plainTextFromRich(item.body)
+    const approach = item.details.approach.trim()
+    const how = item.details.howItWorks.trim()
+    if (body && leftover(body, [item.title, problem, approach, how]) >= 8) rememberFact(asSentence(body), kept)
+    if (approach) rememberFact(asSentence(approach.startsWith('做法') ? approach : `做法上，${approach}`), kept)
+    if (how) rememberFact(asSentence(how), kept)
+    for (const entry of authorizedMetrics(item.details)) {
+      if (metric && entry.id === metric.id) continue
+      rememberFact(asSentence(formatMetric(entry)), kept)
+    }
+    if (item.details.quoteAuthorized && item.details.quote.trim()) rememberFact(asSentence(`客户原话：「${item.details.quote.trim()}」`), kept)
+    const titleKey = normFact(item.title)
+    if (titleKey.length >= 4 && !kept.some((line) => normFact(line).includes(titleKey))) {
+      rememberFact(asSentence(item.title), kept)
+    }
+  }
+  const sections = kept.filter(Boolean)
   const fact = metric ? `${metric.name}从 ${metric.before}${metric.unit} 到 ${metric.after}${metric.unit}` : clip(opener, 80)
   const storyCites = [
     `客户的${fact}。`,
