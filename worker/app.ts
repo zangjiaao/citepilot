@@ -1,12 +1,12 @@
 import { Hono, type Context } from 'hono'
 import { compareCycles, metricsFor, type MetricScope } from '../shared/compare.ts'
-import { competitorNames, parseCompetitorList } from '../shared/competitors.ts'
+import { parseCompetitorList } from '../shared/competitors.ts'
 import { defaultCycleName } from '../shared/cycles.ts'
 import { buildDiagnosis } from '../shared/diagnose.ts'
 import { acceptDraft, channelLabel, coerceUrlHint, copyDraftTitle, DRAFT_CHANNELS, isDraftChannel, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
 import { parseAnswer, summarize } from '../shared/parseAnswer.ts'
 import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.ts'
-import { isCluster, templatePrompts } from '../shared/prompts.ts'
+import { assemblePromptGeneration, assetGroundedCount, isCluster, templatePrompts } from '../shared/prompts.ts'
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
 import { applyBrandMention, assembleDraftPrompt, channelForContentType, finishDraftBody, isContentType, isPublishableDraft, materialDraft, parseAssetIds, parseDraftOptions, placeholderShare, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
@@ -223,31 +223,23 @@ app.post('/api/studios/:id/prompts', async (c) => {
 app.post('/api/studios/:id/prompts/generate', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
   const existing = await listPrompts(c.env.DB, studio.id)
+  const assets = await listAssets(c.env.DB, studio.id)
+  const existingTexts = existing.map((item) => item.text)
   const llm = await resolveLlm(c.env.DB, c.env, 'generate')
   let created: Prompt[] = []
   let source: 'template' | 'llm' = 'template'
   let warning = ''
   if (llm.enabled) {
     try {
-      const raw = await completeJson(
-        llm,
-        '你是 GEO/AEO 题库编辑，帮一个品牌准备要拿去问 ChatGPT、DeepSeek、豆包、Kimi 等回答引擎的中文问题。问题要像真实采购或研究者会问的话，不要写成广告。只输出 JSON：{"prompts":[{"cluster":"brand|category|comparison|scenario","text":"...","rationale":"..."}]}',
-        [
-          `品牌：${studio.name}`,
-          `官网：${studio.website}`,
-          `定位：${studio.positioning}`,
-          `服务：${studio.services.join('、') || '未填'}`,
-          `竞品：${competitorNames(studio.competitors).join('、') || '未填'}`,
-          `关键词：${studio.keywords.join('、') || '未填'}`,
-          `已有题目，不要重复：${existing.map((item) => item.text).join('；') || '无'}`,
-          '请新写 8 题，四个簇都要有。品牌题必须出现品牌名称。对比题必须同时出现品牌名称和至少一个竞品。品类题不要塞进品牌名。',
-        ].join('\n'),
-        0.7,
-      )
-      const accepted = acceptGeneratedPrompts(studio, existing.map((item) => item.text), raw)
-      if (accepted.length >= 4) {
+      const brief = assemblePromptGeneration(studio, existingTexts, assets)
+      const raw = await completeJson(llm, brief.system, brief.user, 0.7)
+      const accepted = acceptGeneratedPrompts(studio, existingTexts, raw)
+      const publicCount = assets.filter((item) => item.publicity !== 'private').length
+      if (accepted.length >= 4 && (publicCount === 0 || assetGroundedCount(accepted, assets, studio) >= 1)) {
         created = accepted.map((item) => toPrompt(studio.id, item, 'llm'))
         source = 'llm'
+      } else if (accepted.length >= 4) {
+        warning = '模型题对不上素材库，已改用结合素材的模板。'
       } else {
         warning = '模型返回的题目不够用，已改用模板。'
       }
@@ -257,7 +249,7 @@ app.post('/api/studios/:id/prompts/generate', async (c) => {
     }
   }
   if (created.length === 0) {
-    const drafts = templatePrompts(studio, existing.map((item) => item.text))
+    const drafts = templatePrompts(studio, existingTexts, assets)
     created = drafts.map((item) => toPrompt(studio.id, item, 'template'))
     source = 'template'
     if (created.length === 0 && !warning) warning = '模板题都已经在题库里了。'
@@ -598,6 +590,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
       selected,
       bank,
       observations.map((item) => ({ promptId: item.promptId, mentioned: item.brandMentioned })),
+      library,
     )
     const chosen = bank.find((item) => item.id === ranked[0])
     if (chosen) {

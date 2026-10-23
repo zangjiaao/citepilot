@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { templatePrompts } from '../shared/prompts.ts'
+import { emptyDetails, type Asset } from '../shared/assets.ts'
+import { assemblePromptGeneration, assetGroundedCount, templatePrompts } from '../shared/prompts.ts'
 import { acceptGeneratedPrompts, acceptOwnSentiment } from '../worker/llm.ts'
 import { blankBrandProfile } from '../shared/brandProfile.ts'
 import type { Studio } from '../shared/types.ts'
@@ -24,6 +25,56 @@ const studio: Studio = {
   updatedAt: '',
 }
 
+function libraryAsset(partial: Pick<Asset, 'id' | 'title'> & Partial<Asset>): Asset {
+  return {
+    studioId: 's',
+    type: partial.type ?? 'idea',
+    body: partial.body ?? '',
+    details: partial.details ?? emptyDetails(),
+    tags: partial.tags ?? [],
+    links: [],
+    publicity: partial.publicity ?? 'public',
+    createdAt: '',
+    updatedAt: '',
+    ...partial,
+  }
+}
+
+const citationAssets: Asset[] = [
+  libraryAsset({
+    id: 'clause',
+    title: '按条款切，不按整本 PDF 切',
+    tags: ['切分', '条款'],
+    details: { ...emptyDetails(), problem: '按页切开时，一条条款会被截在两块中间。', howItWorks: '条款号当主键，段落是条款正文。' },
+  }),
+  libraryAsset({
+    id: 'misquote',
+    type: 'outcome',
+    title: '每周抽查里的错引被数出来',
+    tags: ['错引', '抽查'],
+    details: {
+      ...emptyDetails(),
+      problem: '上线第一周，引用经常落到相邻条款。',
+      approach: '改成按条款切分后再抽查。',
+      metrics: [{ id: 'm', name: '错引', before: '6', after: '1', unit: '条', source: '抽查', customerAuthorized: true }],
+    },
+  }),
+  libraryAsset({
+    id: 'source',
+    type: 'case',
+    title: '尽调报告从翻手册变成点开出处',
+    tags: ['尽调', '出处'],
+    details: { ...emptyDetails(), industry: '装备制造', problem: '写尽调时，出处散在三本手册里。', approach: '先把手册按条款切开。' },
+  }),
+  libraryAsset({
+    id: 'secret',
+    type: 'case',
+    title: '内部试点',
+    publicity: 'private',
+    details: { ...emptyDetails(), problem: '验收题里有未公开的内部流程编号。' },
+  }),
+]
+
 describe('templatePrompts', () => {
   it('covers every cluster and skips questions that already exist', () => {
     const first = templatePrompts(studio, [])
@@ -37,6 +88,22 @@ describe('templatePrompts', () => {
       [...first, ...second].map((item) => item.text),
     )
     expect(third).toEqual([])
+  })
+
+  it('writes scenario questions the asset library can answer', () => {
+    const prompts = templatePrompts(studio, [], citationAssets)
+    const text = prompts.map((item) => item.text).join('\n')
+    expect(text).toMatch(/出处|条款|错引/)
+    expect(text).not.toContain('内部流程编号')
+    expect(prompts.some((item) => item.cluster === 'brand' && item.text.includes('澄川智能体工场'))).toBe(true)
+    expect(prompts.some((item) => item.cluster === 'comparison')).toBe(true)
+    expect(prompts.filter((item) => item.cluster === 'scenario' || item.cluster === 'category').length).toBeGreaterThan(1)
+    const brief = assemblePromptGeneration(studio, [], citationAssets)
+    expect(brief.user).toContain('按条款切，不按整本 PDF 切')
+    expect(brief.user).toContain('错引')
+    expect(brief.system).toContain('素材库')
+    expect(brief.user).not.toContain('内部流程编号')
+    expect(assetGroundedCount(prompts, citationAssets, studio)).toBeGreaterThan(0)
   })
 })
 

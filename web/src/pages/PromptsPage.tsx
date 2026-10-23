@@ -56,7 +56,7 @@ export function PromptsPage() {
       method: 'POST',
       body: JSON.stringify({}),
     })
-    setNotice(result.warning || (result.source === 'llm' ? '模型写了新题。' : '已按品牌资料套用模板题。'))
+    setNotice(result.warning || (result.source === 'llm' ? '模型按品牌和素材库写了新题。' : '已结合素材库套用模板题。'))
     await load(studioId)
   }
 
@@ -99,13 +99,14 @@ export function PromptsPage() {
   return (
     <PageFrame
       title="题库"
-      description="品牌题看别人是否认识你，品类题看不点名时会不会提到你，对比题和场景题看竞品与用法。"
+      description="结合品牌资料和素材库出题。场景题要对得上已有素材；品牌题和对比题留给监测。"
       actions={<Button label="生成题目" variant="primary" clickAction={generate} isDisabled={!studioId} />}
     >
       <VStack gap={4}>
         <ErrorBanner message={error} />
         {notice ? <InfoBanner title={notice} onDismiss={() => setNotice('')} /> : null}
-        {llm && !llm.enabled ? <Text type="supporting">未配置密钥，生成会使用模板，并跳过已经存在的问法。</Text> : null}
+        {llm && !llm.enabled ? <Text type="supporting">未配置密钥时，仍按品牌资料和素材库出模板题，并跳过已经存在的问法。</Text> : null}
+        <Text type="supporting">生成题目会读素材库里的标题、问题和做法。</Text>
         <HStack gap={2} wrap="wrap" vAlign="end">
           <Selector
             label="筛选簇"

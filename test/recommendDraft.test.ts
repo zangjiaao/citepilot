@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { emptyDetails, type Asset } from '../shared/assets.ts'
-import { recommendDraftSelection } from '../shared/recommendDraft.ts'
+import { recommendDraftSelection, relatedDraftPrompts } from '../shared/recommendDraft.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Pick<Studio, 'keywords' | 'services' | 'positioning'> = {
@@ -124,5 +124,30 @@ describe('recommendDraftSelection', () => {
       prompts: [{ id: 'other', cluster: 'brand', text: '股价今天怎么样？' }],
     })
     expect(none.promptId).toBeNull()
+  })
+
+  it('prefers a question the checked asset can answer over a monitor-only prompt', () => {
+    const prompts = [
+      { id: 'pick', cluster: 'category' as const, text: '企业想做智能体应用，应该怎么选服务商？' },
+      { id: 'clause', cluster: 'scenario' as const, text: '整本 PDF 按页切开后，应该怎么按条款切？' },
+      { id: 'misquote', cluster: 'scenario' as const, text: '每周抽查里的错引，怎么看是不是落到了相邻条款？' },
+    ]
+    const outcome = library.find((item) => item.id === 'outcome')
+    const ranked = relatedDraftPrompts('wechat', studio, outcome ? [outcome] : [], prompts, [], library)
+    expect(ranked[0]).toBe('misquote')
+    expect(ranked).not.toContain('pick')
+    expect(ranked).not.toContain('clause')
+    const selected = recommendDraftSelection({
+      contentType: 'wechat',
+      assets: library,
+      studio,
+      selectedIds: ['outcome'],
+      prompts,
+    })
+    expect(selected.promptId).toBe('misquote')
+    const lonely = asset({ id: 'lonely', type: 'idea', title: '完全无关的标题甲乙丙', body: '甲乙丙丁戊己庚辛', tags: ['甲乙丙'] })
+    const fallback = relatedDraftPrompts('thread', studio, [lonely], prompts, [], library)
+    expect(fallback[0]).toBe('clause')
+    expect(fallback).not.toContain('pick')
   })
 })

@@ -108,6 +108,7 @@ export function DraftsPage() {
   const [drafts, setDrafts] = useState<ContentDraft[]>([])
   const [platformId, setPlatformId] = useState<PublishPlatformId>('xiaohongshu')
   const [promptCleared, setPromptCleared] = useState(false)
+  const [promptPinned, setPromptPinned] = useState(false)
   const [assetIds, setAssetIds] = useState<string[]>([])
   const [assets, setAssets] = useState<Asset[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -209,9 +210,14 @@ export function DraftsPage() {
   const channel = platform.channel
   const recommendation = useMemo(() => {
     if (!studio) return { assetIds: [] as string[], rankedIds: [] as string[], promptId: null as string | null, promptIds: [] as string[] }
-    return recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
-  }, [studio, contentType, assets, prompts, mentions])
+    return recommendDraftSelection({ contentType, assets, studio, prompts, mentions, selectedIds: assetIds })
+  }, [studio, contentType, assets, prompts, mentions, assetIds])
   const recommendedPrompt = prompts.find((item) => item.id === recommendation.promptId) ?? null
+
+  useEffect(() => {
+    if (brandMention === 'none' || promptPinned || promptCleared) return
+    setPromptId(recommendation.promptId ?? '')
+  }, [recommendation.promptId, brandMention, promptPinned, promptCleared])
 
   useEffect(() => {
     if (!presetAsset || !studio || assets.length === 0) return
@@ -243,6 +249,7 @@ export function DraftsPage() {
     const pinned = libraryPin ? assets.find((item) => item.id === libraryPin && item.publicity !== 'private') : undefined
     const ids = pinned ? [pinned.id, ...next.assetIds.filter((id) => id !== pinned.id)].slice(0, cap) : next.assetIds
     setAssetIds(ids)
+    setPromptPinned(false)
     if (brandMention === 'none') {
       setPromptId('')
       return
@@ -256,6 +263,7 @@ export function DraftsPage() {
     setLibraryPin('')
     const next = recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
     setAssetIds(next.assetIds)
+    setPromptPinned(false)
     if (brandMention === 'none') {
       setPromptId('')
       return
@@ -604,9 +612,11 @@ export function DraftsPage() {
           if (value === 'none') {
             setPromptId('')
             setPromptCleared(true)
+            setPromptPinned(false)
             return
           }
           setPromptCleared(false)
+          setPromptPinned(false)
           if (!promptId && recommendation.promptId) {
             setPromptId(recommendation.promptId)
           }
@@ -623,7 +633,7 @@ export function DraftsPage() {
       {brandMention !== 'none' ? (
         <Selector
           label="关联题目"
-          description={brandMention === 'light' ? '默认带上一道最相关、目前较少被提到的题。可以换，也可以清空。' : '可选。留空就只写更明确的品牌收束。'}
+          description={brandMention === 'light' ? '优先当前勾选的素材能回答的题。可以换，也可以清空。' : '可选。优先对上已勾选的素材；留空就只写品牌收束。'}
           value={promptId}
           hasSearch
           options={[{ value: '', label: '不关联题目' }, ...prompts.map((item) => ({ value: item.id, label: item.text }))]}
@@ -631,6 +641,7 @@ export function DraftsPage() {
             const next = value || ''
             setPromptId(next)
             setPromptCleared(!next)
+            setPromptPinned(Boolean(next) && next !== (recommendation.promptId ?? ''))
           }}
         />
       ) : null}

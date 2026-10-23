@@ -1,6 +1,7 @@
 import type { Asset, AssetType } from './assets.ts'
 import { plainTextFromRich } from './richText.ts'
 import type { ContentType } from './draftPrompt.ts'
+import { assetMatchTerms } from './prompts.ts'
 import type { Cluster, Prompt, Studio } from './types.ts'
 
 /** Preferred asset types per content type. Higher means a closer fit. Private assets are never recommended. */
@@ -53,6 +54,7 @@ export function recommendDraftSelection(input: {
   studio: StudioLike
   prompts?: PromptLike[]
   mentions?: PromptMention[]
+  selectedIds?: string[]
 }): DraftRecommendation {
   const usable = input.assets.filter((item) => item.publicity !== 'private')
   const ranked = usable
@@ -61,9 +63,14 @@ export function recommendDraftSelection(input: {
   const cap = SHORT_TYPES.has(input.contentType) ? 2 : 5
   const strong = ranked.filter((item) => item.score >= STRONG_SCORE).length
   const count = ranked.length === 0 ? 0 : Math.min(cap, Math.max(1, Math.min(strong, cap)))
-  const promptIds = relatedDraftPrompts(input.contentType, input.studio, usable, input.prompts ?? [], input.mentions ?? [])
+  const picked = ranked.slice(0, count).map((item) => item.id)
+  const checked = (input.selectedIds ?? [])
+    .map((id) => usable.find((item) => item.id === id))
+    .filter((item): item is Asset => Boolean(item))
+  const focus = checked.length > 0 ? checked : usable.filter((item) => picked.includes(item.id))
+  const promptIds = relatedDraftPrompts(input.contentType, input.studio, focus, input.prompts ?? [], input.mentions ?? [], usable)
   return {
-    assetIds: ranked.slice(0, count).map((item) => item.id),
+    assetIds: picked,
     rankedIds: ranked.map((item) => item.id),
     promptId: promptIds[0] ?? null,
     promptIds,
@@ -93,25 +100,46 @@ export function relatedDraftPrompts(
   assets: Asset[],
   prompts: PromptLike[],
   mentions: PromptMention[],
+  library?: Asset[],
 ): string[] {
-  const terms = [...studioTerms(studio), ...assets.flatMap((item) => [item.title, ...item.tags, item.details.problem, item.details.industry])]
-    .map((item) => item.trim())
-    .filter((item) => item.length >= 2)
+  const selected = assets.filter((item) => item.publicity !== 'private')
+  const pool = (library ?? assets).filter((item) => item.publicity !== 'private')
+  const focus = selected.length > 0 ? selected : pool
+  if (focus.length === 0) return rankPrompts(contentType, studioTerms(studio), prompts, mentions, false).slice(0, 3)
+  const primary = rankPrompts(contentType, assetMatchTerms(focus, studio), prompts, mentions, true)
+  if (primary.length > 0 || sameAssetIds(focus, pool)) return primary.slice(0, 3)
+  return rankPrompts(contentType, assetMatchTerms(pool, studio), prompts, mentions, true).slice(0, 3)
+}
+
+function rankPrompts(
+  contentType: ContentType,
+  terms: string[],
+  prompts: PromptLike[],
+  mentions: PromptMention[],
+  requireOverlap: boolean,
+): string[] {
   const ranked: Array<{ id: string; score: number; rate: number }> = []
   for (const prompt of prompts) {
     const overlap = terms.filter((term) => prompt.text.includes(term)).length
+    if (requireOverlap && overlap === 0) continue
     const stats = mentionStats(prompt.id, mentions)
     const cluster = CLUSTER_FIT[contentType][prompt.cluster] ?? 0
-    let score = cluster + Math.min(overlap, 3) * 3
+    let score = cluster + Math.min(overlap, 4) * 4
     if (stats.rate === null) score += 0.5
     else score += (1 - stats.rate) * 4
     if (stats.rate !== null && stats.rate >= 0.8) score -= 2
-    const eligible = score >= 3 && (overlap > 0 || (stats.rate !== null && stats.rate < 0.5))
+    const eligible = requireOverlap || (score >= 3 && (overlap > 0 || (stats.rate !== null && stats.rate < 0.5)))
     if (!eligible) continue
     ranked.push({ id: prompt.id, score, rate: stats.rate ?? 1 })
   }
   ranked.sort((a, b) => b.score - a.score || a.rate - b.rate || a.id.localeCompare(b.id))
-  return ranked.slice(0, 3).map((item) => item.id)
+  return ranked.map((item) => item.id)
+}
+
+function sameAssetIds(left: Asset[], right: Asset[]): boolean {
+  if (left.length !== right.length) return false
+  const ids = new Set(right.map((item) => item.id))
+  return left.every((item) => ids.has(item.id))
 }
 
 function mentionStats(promptId: string, mentions: PromptMention[]): { samples: number; rate: number | null } {
