@@ -763,7 +763,7 @@ export function DraftsPage() {
       {missing.length > 0 ? (
         <TipBanner id="gaps" page="drafts" status="warning" title={missing.length > 1 ? `${missing[0]}。另外还有 ${missing.length - 1} 条。` : `${missing[0]}。`} />
       ) : flags.length > 0 ? (
-        <TipBanner id="flags" page="drafts" title="空话已换成【待补充】，发布前补上。" />
+        <TipBanner id="flags" page="drafts" title={body.includes('【待补充') ? '有一句待补充，发布前补上。' : '有一句对不上已授权的素材，发布前核对。'} />
       ) : null}
       <Text color="secondary">
         {channelLabel(preview.channel)} · {SOURCE_LABEL[preview.source] ?? preview.source}

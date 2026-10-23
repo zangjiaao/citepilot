@@ -7,10 +7,10 @@ import type { DraftBrief, DraftChannel, Studio } from './types.ts'
 export type { BrandMention } from './assets.ts'
 
 export const NO_FABRICATION_RULE =
-  '只能使用勾选的素材里已经写出的事实。品牌资料只作语气和红线。不要编造客户名、界面、数字、奖项或团队规模。没有的数字写成【待补充：客户授权的前后数据】。'
+  '只能使用勾选的素材里已经写出的事实。品牌资料只作语气和红线。不要编造客户名、界面、数字、奖项或团队规模。没有已授权的前后数据时，不要编造指标，也不要用【待补充】占段落；改写问题和做法。整篇最多一句缺口说明。thread 的 1/N 编号不是数据。'
 
 export const SHOW_DONT_TELL_RULE =
-  '写客户的效率变化和已经发生的结果，不要写我们有多强。先给具体问题、前后数据或一处交互，不要先介绍公司。不要用获奖、人数、行业领先、头部、顶级。'
+  '写客户已经发生的变化，不要写我们有多强。有已授权的前后数据就写那一组；没有就写具体问题和做法。不要先介绍公司。不要用获奖、人数、行业领先、头部、顶级。'
 
 export const PARAGRAPH_RULE =
   '正文用短段落，段与段之间空一行；一两句就换段；不要大段墙；短帖更碎，长文也避免超过约 3～4 句一段。图片单独成段。'
@@ -158,12 +158,12 @@ export function parseAssetIds(value: unknown): { ok: true; ids: string[] } | { o
   return { ok: true, ids: [...new Set(ids)] }
 }
 
-export function profileGaps(_studio: Studio, options: DraftRequestOptions, assets: Asset[]): string[] {
+export function profileGaps(_studio: Studio, _options: DraftRequestOptions, assets: Asset[]): string[] {
   const gaps: string[] = []
   if (assets.length === 0) gaps.push('先从素材库勾选一条或多条。不勾选时，稿子没有客户侧的事实')
   const metrics = assets.flatMap((item) => item.details.metrics.filter((metric) => metric.customerAuthorized && (metric.before || metric.after)))
-  if (assets.length > 0 && metrics.length === 0 && (options.contentType === 'case-breakdown' || options.contentType === 'wechat')) {
-    gaps.push('数据成效：补一组客户授权公开的前后数字，例如耗时、成本、准确率或吞吐')
+  if (assets.length > 0 && metrics.length === 0) {
+    gaps.push('没有已授权的前后数字：正文按问题和做法来写，不要编造耗时或准确率')
   }
   if (assets.some((item) => item.type === 'testimonial' && item.details.quote.trim() && !item.details.quoteAuthorized)) {
     gaps.push('客户评价还没有授权公开，稿子里不会引用原话')
@@ -246,36 +246,106 @@ export function assembleDraftPrompt(
   return { system, user }
 }
 
+const METRIC_GAP = '【待补充：客户授权公开的前后数据】'
+
+export function placeholderShare(body: string): number {
+  const blocks = body.split(/\n+/).map((item) => item.trim()).filter(Boolean)
+  if (blocks.length === 0) return 0
+  return blocks.filter((item) => item.includes('【待补充')).length / blocks.length
+}
+
+function isLabelDigit(text: string, index: number, raw: string): boolean {
+  const after = text.slice(index + raw.length, index + raw.length + 3)
+  const before = text.slice(Math.max(0, index - 3), index)
+  if (/^\s*\//.test(after) || /\/\s*$/.test(before)) return true
+  const lineStart = text.lastIndexOf('\n', index - 1) + 1
+  if (/^\s*$/.test(text.slice(lineStart, index)) && /^\s*[.)）、]/.test(after)) return true
+  return false
+}
+
+function strayDigits(sentence: string, allowed: Set<string>): string[] {
+  const found: string[] = []
+  sentence.replace(/\d+(?:\.\d+)?/g, (raw, index: number) => {
+    if (!allowed.has(raw) && !isLabelDigit(sentence, index, raw)) found.push(raw)
+    return raw
+  })
+  return found
+}
+
+function stripUnauthorizedDigits(sentence: string, allowed: Set<string>): string {
+  return sentence
+    .replace(/\d+(?:\.\d+)?/g, (raw, index: number) => (allowed.has(raw) || isLabelDigit(sentence, index, raw) ? raw : ''))
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([。！？，、%％])/g, '$1')
+    .trim()
+}
+
+function hasWords(text: string): boolean {
+  return text.replace(/[\d\s./\\:：、，。！？%％\-【】]/g, '').length >= 4
+}
+
+function qualitativeFallback(assets: Asset[]): string {
+  const problem = assets.map((item) => item.details.problem.trim()).find(Boolean)
+  const how = assets.map((item) => item.details.howItWorks.trim() || item.details.approach.trim()).find(Boolean)
+  return [problem, how]
+    .filter((item): item is string => Boolean(item))
+    .map((item) => (item.endsWith('。') || item.endsWith('！') || item.endsWith('？') ? item : `${item}。`))
+    .join('\n\n')
+}
+
 export function rewriteGenericSentences(body: string, assets: Asset[], allowBragging: boolean): { body: string; flags: string[] } {
   const allowed = allowedNumbers(assets)
   const flags: string[] = []
   const parts = body.split(/(?<=[。！？\n])/)
   let usedFact = false
+  let usedGap = false
   const next = parts.map((part) => {
     const sentence = part.trim()
     if (!sentence || sentence.includes('【待补充')) return part
-    if (/^!\[[^\]]*]\([^)]*\)$/.test(sentence) || /^【图片\d+】$/.test(sentence)) return part
+    if (/^!\[[^\]]*]\([^)]*\)$/.test(sentence) || /^【\s*图片\d+\s*】$/.test(sentence)) return part
+    if (/^\d{1,2}\s*\/\s*\d{1,2}$/.test(sentence)) return part
     const brag = !allowBragging && BRAG.test(sentence)
     const generic = GENERIC.test(sentence)
     const hardSell = HARD_SELL.test(sentence)
-    const stray = [...(sentence.match(/\d+(?:\.\d+)?/g) ?? [])].some((item) => !allowed.has(item))
-    if (!brag && !generic && !hardSell && !stray) return part
+    const stray = strayDigits(sentence, allowed)
+    if (!brag && !generic && !hardSell && stray.length === 0) return part
     flags.push(sentence.replace(/\s+/g, ' ').slice(0, 80))
+    if (!brag && !generic && !hardSell) {
+      const stripped = stripUnauthorizedDigits(sentence, allowed)
+      if (hasWords(stripped)) return part.replace(sentence, stripped)
+      if (!usedFact) {
+        const problem = assets.map((item) => item.details.problem.trim()).find(Boolean)
+        if (problem) {
+          usedFact = true
+          return part.replace(sentence, problem.endsWith('。') ? problem : `${problem}。`)
+        }
+      }
+      return part.replace(sentence, '')
+    }
     if (!usedFact) {
-      const fact = assets.flatMap((item) => item.details.metrics.filter((metric) => metric.customerAuthorized))[0]
+      const fact = assets.flatMap((item) => item.details.metrics.filter((metric) => metric.customerAuthorized && (metric.before || metric.after)))[0]
       if (fact) {
         usedFact = true
         return part.replace(sentence, `客户的${fact.name}从 ${fact.before}${fact.unit} 变成 ${fact.after}${fact.unit}。`)
       }
       const problem = assets.map((item) => item.details.problem.trim()).find(Boolean)
-      if (problem && (brag || generic || hardSell)) {
+      if (problem) {
         usedFact = true
-        return part.replace(sentence, `${problem}。`)
+        return part.replace(sentence, problem.endsWith('。') ? problem : `${problem}。`)
       }
     }
-    return part.replace(sentence, stray ? '【待补充：客户授权公开的前后数据】' : '【待补充：把这句硬广或空话换成客户侧的问题或变化】')
+    if (!usedGap) {
+      usedGap = true
+      return part.replace(sentence, METRIC_GAP)
+    }
+    return part.replace(sentence, '')
   })
-  return { body: next.join(''), flags }
+  const rewritten = next.join('').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+  if (placeholderShare(rewritten) > 0.3) {
+    const story = placeholderShare(body) > 0.3 ? qualitativeFallback(assets) || body : body
+    return { body: story, flags: ['有未授权数字，已保留原来的故事，没有改成一串待补充。'] }
+  }
+  return { body: rewritten, flags }
 }
 
 export function softCloser(brand: string, website: string): string {
@@ -320,6 +390,7 @@ export function finishDraftBody(body: string, brand: string, website: string, me
 export function isPublishableDraft(body: string, contentType: string): boolean {
   const story = stripImplantClosers(body).replace(/\s+/g, '')
   if (!story || /(?:案例|产品|巧思|交互细节|数据成效|客户评价|踩坑经验|参考资料)：/.test(story)) return false
+  if ((body.match(/【待补充/g) ?? []).length > 1 || placeholderShare(body) > 0.3) return false
   if (contentType === 'thread') return stripImplantClosers(body).split(/\n\n+/).filter(Boolean).length >= 4
   if (contentType === 'short-post') return story.length >= 180
   return story.length >= 320

@@ -9,7 +9,7 @@ import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.t
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
-import { applyBrandMention, assembleDraftPrompt, channelForContentType, finishDraftBody, isContentType, isPublishableDraft, materialDraft, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, channelForContentType, finishDraftBody, isContentType, isPublishableDraft, materialDraft, parseAssetIds, parseDraftOptions, placeholderShare, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
 import { backfillDraftImages, draftImages } from '../shared/draftImages.ts'
 import { relatedDraftPrompts } from '../shared/recommendDraft.ts'
 import { readAssetDraft } from '../shared/assets.ts'
@@ -648,14 +648,14 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     try {
       const raw = await completeJson(
         writer,
-        '你在做硬广和水文自检。硬广、立即咨询、行业领先、赋能数字化、一眼广告腔，以及自夸和未授权数字，都改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。软植入结尾仍留一句品牌或官网，用来标明出处；不要在中段反复写品牌，不要写成硬广或水文。只输出 JSON：{"body":"..."}',
+        '你在做硬广和水文自检。硬广、立即咨询、行业领先、赋能数字化、一眼广告腔，以及自夸，都改成素材里客户的问题或做法。没有已授权的前后数据时不要编造数字，也不要把句子换成【待补充】。thread 的 1/N 编号保留。不要补奖项或团队规模。软植入结尾仍留一句品牌或官网，用来标明出处；不要在中段反复写品牌，不要写成硬广或水文。只输出 JSON：{"body":"..."}',
         `要改的句子：${polished.flags.join('\n')}\n原文：${brief.body}`,
         0.2,
       )
       const next = raw && typeof raw === 'object' && typeof (raw as { body?: unknown }).body === 'string' ? (raw as { body: string }).body.trim() : ''
       const mentions = studio.name ? next.split(studio.name).length - 1 : 0
       const brandOk = options.brandMention === 'none' ? mentions === 0 : options.brandMention === 'light' ? mentions <= 1 : mentions >= 1
-      if (next.length >= 80 && brandOk) brief = { ...brief, body: next }
+      if (next.length >= 80 && brandOk && placeholderShare(next) <= 0.3) brief = { ...brief, body: next }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(JSON.stringify({ message: 'draft self-check fell back', error: message }))

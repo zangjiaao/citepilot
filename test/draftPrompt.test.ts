@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyBrandPageSave, blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { emptyDetails, readAssetDraft, type Asset } from '../shared/assets.ts'
-import { applyBrandMention, assembleDraftPrompt, finishDraftBody, guideCloser, IMPLANT_LEVELS, IMPLANT_PURPOSE, isPublishableDraft, materialDraft, NO_FABRICATION_RULE, paceDraftBody, PARAGRAPH_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, finishDraftBody, guideCloser, IMPLANT_LEVELS, IMPLANT_PURPOSE, isPublishableDraft, materialDraft, NO_FABRICATION_RULE, paceDraftBody, PARAGRAPH_RULE, placeholderShare, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -150,6 +150,66 @@ describe('self check', () => {
     expect(polished.body).not.toContain('行业领先')
     expect(polished.body).not.toContain('99')
     expect(polished.body.includes('45') || polished.body.includes('【待补充')).toBe(true)
+  })
+
+  it('keeps a thread story when there are no authorized metrics', () => {
+    const onboarding: Asset = {
+      ...metricAsset,
+      id: 'onboard',
+      type: 'case',
+      title: '企业员工入职引导Agent',
+      body: '2024 年的入职手册还是整本 PDF。',
+      details: {
+        ...emptyDetails(),
+        problem: '企业需要花费精力给员工培训公司制度',
+        approach: '通过RAG方式收集公司制度',
+        howItWorks: '我们通过 RAG 方式收集公司制度，AI 会帮助新入职员工了解企业制度',
+      },
+    }
+    const thread = [
+      '1/6 企业需要花费精力给员工培训公司制度。',
+      '2/6 2024 年的手册仍是整本 PDF。',
+      '3/6 做法是通过 RAG 收集公司制度。',
+      '4/6 AI 会帮助新入职员工了解企业制度。',
+      '5/6 没有对外耗时，这一条不写数字。',
+      '6/6 入职引导按条款回答，而不是先上完培训。',
+    ].join('\n\n')
+    const polished = rewriteGenericSentences(thread, [onboarding], false)
+    expect(polished.body).toContain('1/6')
+    expect(polished.body).toContain('6/6')
+    expect(polished.body).toContain('RAG')
+    expect(polished.body).toContain('2024')
+    expect(polished.body).not.toContain('【待补充')
+    const numbered = ['1. 先把制度收进 RAG。', '2. 新员工按条款提问。'].join('\n')
+    expect(rewriteGenericSentences(numbered, [onboarding], false).body).toContain('1. 先把制度收进 RAG。')
+    const invented = Array.from({ length: 6 }, (_, index) => `${index + 1}/6 效率提升了 ${80 + index}%。`).join('\n\n')
+    const kept = rewriteGenericSentences(invented, [onboarding], false)
+    expect(kept.body).toContain('1/6')
+    expect(kept.body).toContain('6/6')
+    expect((kept.body.match(/【待补充/g) ?? []).length).toBeLessThanOrEqual(1)
+    expect(kept.body).not.toContain('80')
+    const wall = Array.from({ length: 6 }, () => '【待补充：客户授权公开的前后数据】').join('\n\n')
+    expect(isPublishableDraft(wall, 'thread')).toBe(false)
+    expect(placeholderShare(wall)).toBeGreaterThan(0.3)
+    const restored = rewriteGenericSentences(wall, [onboarding], false)
+    expect(restored.body).toContain('企业需要花费精力给员工培训公司制度')
+    expect(restored.body).toContain('RAG')
+    expect((restored.body.match(/【待补充/g) ?? []).length).toBeLessThanOrEqual(1)
+    const draft = materialDraft(studio, [onboarding], '/', 'none', '', 'thread')
+    expect(draft.body).toContain('企业需要花费精力给员工培训公司制度')
+    expect(draft.body).toContain('RAG')
+    expect(draft.body).not.toContain(studio.name)
+    expect(draft.body).not.toContain('【待补充')
+    expect(isPublishableDraft(draft.body, 'thread')).toBe(true)
+    const prompt = assembleDraftPrompt(
+      studio,
+      { audience: '', contentType: 'thread', tone: '', length: 'medium', allowBragging: false, brandMention: 'none' },
+      { channelLabel: 'X / thread' },
+      [onboarding],
+    )
+    expect(prompt.system).toContain('不要用【待补充】占段落')
+    expect(prompt.system).toContain('1/N')
+    expect(prompt.system).not.toContain('没有的数字写成【待补充')
   })
 
   it('flags hard-sell filler and rewrites it toward a customer fact', () => {
