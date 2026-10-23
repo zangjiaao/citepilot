@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { acceptDraft, copyDraftTitle, DRAFT_CHANNELS, formatDraftForCopy, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
+import { acceptDraft, coerceUrlHint, copyDraftTitle, DRAFT_CHANNELS, formatDraftForCopy, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
 import { blankBrandProfile } from '../shared/brandProfile.ts'
 import type { Studio } from '../shared/types.ts'
 
@@ -47,6 +47,15 @@ describe('templateDraft', () => {
     expect(draft.body).toContain('可引用的问答')
     expect(draft.body).toContain('页面没有 FAQ')
     expect(draft.urlHint).toContain('/faq')
+    expect(draft.urlHint.startsWith('https://example.com/faq')).toBe(true)
+  })
+
+  it('replaces a sneaked example.com hint when the studio site is somewhere else', () => {
+    expect(coerceUrlHint('https://example.com/faq', 'https://www.oak-studio.org/', '/faq')).toBe('https://www.oak-studio.org/faq')
+    expect(coerceUrlHint('https://www.oak-studio.org/custom — 说明', 'https://www.oak-studio.org/', '/faq')).toBe(
+      'https://www.oak-studio.org/custom — 说明',
+    )
+    expect(coerceUrlHint('https://example.com/faq', 'https://example.com', '/faq')).toBe('https://example.com/faq')
   })
 
   it('gives every channel its own title and a body that names the studio', () => {

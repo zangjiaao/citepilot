@@ -35,9 +35,24 @@ export interface DraftContext {
   gapDetail?: string
 }
 
+export function landingUrl(website: string, channelPath: string): string {
+  const path = channelPath.startsWith('/') ? channelPath : `/${channelPath}`
+  return `${siteOrigin(website)}${path}`
+}
+
+export function coerceUrlHint(urlHint: string, website: string, channelPath: string): string {
+  const fallback = landingUrl(website, channelPath)
+  const studioHost = siteHost(website)
+  if (!studioHost) return fallback
+  const hintHost = siteHost(urlHint)
+  if (!hintHost || hintHost.toLowerCase() !== studioHost.toLowerCase()) return fallback
+  if (isExampleHost(hintHost) && !isExampleHost(studioHost)) return fallback
+  return urlHint.trim()
+}
+
 export function templateDraft(context: DraftContext): DraftBrief {
   const channel = DRAFT_CHANNELS.find((item) => item.id === context.channel) ?? DRAFT_CHANNELS[0]
-  const urlHint = `${siteOrigin(context.studio.website)}${channel.path} — ${channel.hint}`
+  const urlHint = `${landingUrl(context.studio.website, channel.path)} — ${channel.hint}`
   return {
     title: cap(titleFor(context), 80),
     body: bodyFor(context).trim(),
@@ -428,4 +443,17 @@ function siteOrigin(website: string): string {
   } catch {
     return website.replace(/\/$/, '')
   }
+}
+
+function siteHost(value: string): string {
+  const match = value.match(/https?:\/\/[^\s]+/i)
+  try {
+    return new URL(match?.[0] ?? value).host
+  } catch {
+    return ''
+  }
+}
+
+function isExampleHost(host: string): boolean {
+  return /^(www\.)?example\.com$/i.test(host)
 }

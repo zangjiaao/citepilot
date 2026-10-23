@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyBrandPageSave, blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { emptyDetails, readAssetDraft, type Asset } from '../shared/assets.ts'
-import { applyBrandMention, assembleDraftPrompt, materialDraft, NO_FABRICATION_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, materialDraft, NO_FABRICATION_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, softCloser } from '../shared/draftPrompt.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -102,7 +102,12 @@ describe('assembleDraftPrompt', () => {
     expect(prompt.system).toContain('不要当标题或开头')
     expect(prompt.system).toContain('知识库怎么验收？')
     expect(prompt.system).toContain('不要写「我们是行业领先」')
+    expect(prompt.system).toContain('立即咨询')
+    expect(prompt.system).toContain(softCloser(studio.name, studio.website))
+    expect(prompt.system).not.toContain('也可以完全不出现')
+    expect(prompt.system).toContain('不要写成 example.com')
     expect(prompt.user).toContain('不要以题目开头')
+    expect(prompt.user).toContain(studio.website)
   })
 
   it('keeps an intentional recommendation for the clear call to action', () => {
@@ -137,17 +142,26 @@ describe('self check', () => {
 })
 
 describe('implant intensity', () => {
-  it('writes a soft implant as a story and does not open with the linked question', () => {
+  it('writes a soft implant as a story, weaves a fact, and ends with one closer', () => {
+    const closer = softCloser(studio.name, studio.website)
     const draft = materialDraft(studio, [metricAsset, ideaAsset], '/guides/how-we-deliver', 'light', '知识库怎么验收？')
     expect(draft.body.startsWith('客户的')).toBe(true)
     expect(draft.body).not.toContain('知识库怎么验收')
     expect(draft.body).not.toContain('问：')
-    expect(draft.body).not.toContain(studio.name)
+    expect(draft.body.split(studio.name).length - 1).toBe(1)
+    expect(draft.body.trim().endsWith(closer)).toBe(true)
     expect(draft.body).toContain('45')
     expect(draft.body).toContain('同一件事里还有一处可以核对')
+    expect(draft.urlHint).toBe('https://www.oak-studio.org/guides/how-we-deliver')
+    const quiet = materialDraft(studio, [metricAsset], '/faq', 'light')
+    expect(quiet.body).toContain('当时卡住的是')
+    expect(quiet.body.trim().endsWith(closer)).toBe(true)
+    expect(quiet.body.split(studio.name).length - 1).toBe(1)
+    expect(quiet.urlHint).toBe('https://www.oak-studio.org/faq')
   })
 
-  it('leaves the brand out of a pure share and keeps one trailing mention when the story already named it', () => {
+  it('leaves the brand out of a pure share and appends one soft closer when the story named it or left it out', () => {
+    const closer = softCloser(studio.name, studio.website)
     const plain = materialDraft(studio, [metricAsset], '/guides/how-we-deliver', 'none', '知识库怎么验收？')
     expect(plain.body).not.toContain(studio.name)
     expect(plain.body).not.toContain('知识库怎么验收')
@@ -163,8 +177,23 @@ describe('implant intensity', () => {
       'light',
     )
     expect(named.body.split(studio.name).length - 1).toBe(1)
-    expect(named.body.trim().endsWith(studio.name)).toBe(true)
+    expect(named.body.trim().endsWith(closer)).toBe(true)
     expect(named.citeSentences.every((item) => !item.includes(studio.name))).toBe(true)
+    const blank = applyBrandMention(
+      {
+        title: '查询变快',
+        body: '客户的单次查询从 45 分钟变成 8 分钟。手册散落在三本纸质册子里，值班员要自己翻。',
+        citeSentences: ['客户的单次查询从 45 分钟变成 8 分钟。', '值班员原来要翻三本手册。'],
+        urlHint: 'https://example.com/faq',
+      },
+      studio.name,
+      studio.website,
+      'light',
+    )
+    expect(blank.body.split(studio.name).length - 1).toBe(1)
+    expect(blank.body.trim().endsWith(closer)).toBe(true)
+    expect(blank.body).not.toContain('example.com')
+    expect(blank.body).not.toContain('立即咨询')
   })
 })
 

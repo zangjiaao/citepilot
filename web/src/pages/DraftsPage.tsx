@@ -553,7 +553,7 @@ export function DraftsPage() {
       />
       <Selector
         label="植入强度"
-        description="默认不植入，只写素材里的事。软植入仍是故事，最多在结尾提一次品牌；明确种草才写下一步。不是每篇都要种草。"
+        description="不植入时全文不出现品牌。软植入正文仍是故事，结尾轻轻带一次品牌或官网。明确种草才会写下一步。"
         value={brandMention}
         options={IMPLANT_LEVELS.map((item) => ({ value: item.id, label: item.label, description: item.description }))}
         onChange={(value) => {
@@ -572,7 +572,13 @@ export function DraftsPage() {
           }
         }}
       />
-      <Text color="secondary">软植入从素材写故事，只在叙述里悄悄放进一两句可引用的事实，不要改成广告。</Text>
+      <Text color="secondary">
+        {brandMention === 'none'
+          ? '不植入：正文任何地方都不出现品牌名。'
+          : brandMention === 'light'
+            ? '正文仍是故事；结尾会轻轻带一次品牌或官网，不会写成硬广。'
+            : '明确种草：结尾会写出品牌、官网和下一步，比软植入更直接。'}
+      </Text>
       {brandMention === 'light' && promptId ? <Text color="secondary">{SOFT_IMPLANT_HINT}</Text> : null}
       <TextInput label="目标读者" description="可空。不填就用品牌资料里的客户画像。" value={audience} onChange={setAudience} width="100%" />
       <TextInput label="语气" description="可空。不填就用品牌语气。" value={tone} onChange={setTone} width="100%" />
@@ -716,7 +722,11 @@ export function DraftsPage() {
       })}
       <TextArea
         label="建议被引用的句子"
-        description="一行一句。回答引擎适合整句引用，所以每句都带上品牌名称。"
+        description={
+          brandMention === 'guide'
+            ? '一行一句。回答引擎适合整句引用，明确种草时每句可以带上品牌名称。'
+            : '一行一句。抽出故事里的事实。不植入和软植入的引用句不写品牌名。'
+        }
         value={cites}
         onChange={(value) => {
           setCites(value)

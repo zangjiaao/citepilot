@@ -3,7 +3,7 @@ import { compareCycles, metricsFor, type MetricScope } from '../shared/compare.t
 import { competitorNames, parseCompetitorList } from '../shared/competitors.ts'
 import { defaultCycleName } from '../shared/cycles.ts'
 import { buildDiagnosis } from '../shared/diagnose.ts'
-import { acceptDraft, channelLabel, copyDraftTitle, DRAFT_CHANNELS, isDraftChannel, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
+import { acceptDraft, channelLabel, coerceUrlHint, copyDraftTitle, DRAFT_CHANNELS, isDraftChannel, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
 import { parseAnswer, summarize } from '../shared/parseAnswer.ts'
 import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.ts'
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
@@ -603,9 +603,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
       const raw = await completeJson(writer, prompt.system, `${prompt.user}\n底稿：${JSON.stringify(brief)}\n把勾选的素材合成一篇，先写客户侧的变化。`, 0.4)
       const accepted = acceptDraft(raw, studio.name, options.brandMention)
       if (accepted) {
-        const host = new URL(studio.website).host
-        if (!accepted.urlHint.includes(host)) accepted.urlHint = brief.urlHint
-        brief = accepted
+        brief = { ...accepted, urlHint: coerceUrlHint(accepted.urlHint, studio.website, channelMeta?.path ?? '/') }
         source = 'deepseek'
       }
     } catch (error) {
@@ -618,7 +616,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     try {
       const raw = await completeJson(
         writer,
-        '你在做硬广和水文自检。硬广、立即咨询、行业领先、赋能数字化、一眼广告腔，以及自夸和未授权数字，都改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。软植入时品牌名最多在结尾出现一次。只输出 JSON：{"body":"..."}',
+        '你在做硬广和水文自检。硬广、立即咨询、行业领先、赋能数字化、一眼广告腔，以及自夸和未授权数字，都改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。软植入时保留结尾那一句软收束，品牌名只在这一句里出现一次，不要在正文中段再写品牌。只输出 JSON：{"body":"..."}',
         `要改的句子：${polished.flags.join('\n')}\n原文：${brief.body}`,
         0.2,
       )
@@ -633,6 +631,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     polished = rewriteGenericSentences(brief.body, selected, options.allowBragging)
   }
   brief = applyBrandMention({ ...brief, body: polished.body }, studio.name, studio.website, options.brandMention)
+  brief = { ...brief, urlHint: coerceUrlHint(brief.urlHint, studio.website, channelMeta?.path ?? '/') }
   const gaps = profileGaps(studio, options, selected)
 
   const draft: DraftPreview = {
