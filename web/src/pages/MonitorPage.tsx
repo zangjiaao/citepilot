@@ -15,7 +15,7 @@ import { SELF_BRAND_KEY, type Cycle, type CycleKind, type CycleMetrics, type Obs
 import { api } from '../api'
 import { formatRank, formatTime, percent } from '../format'
 import { useStudio } from '../studio'
-import { ErrorBanner, InfoBanner, PageFrame, WarningBanner } from '../ui'
+import { ErrorBanner, InfoBanner, PageFrame, TipBanner } from '../ui'
 
 interface ObsRow extends Record<string, unknown> {
   id: string
@@ -156,7 +156,7 @@ export function MonitorPage() {
     >
       <VStack gap={4}>
         <ErrorBanner message={error} />
-        {notice ? <InfoBanner title="这条样本已记下" description={notice} /> : null}
+        {notice ? <InfoBanner title="这条样本已记下" onDismiss={() => setNotice('')} /> : null}
         <VStack as="form" gap={3} onSubmit={(event) => void save(event)}>
           <FormLayout direction="vertical">
             <Selector
@@ -301,7 +301,7 @@ function BatchMetrics({ name, metrics }: { name: string; metrics: CycleMetrics }
   return (
     <VStack gap={3}>
       <Heading level={2}>{name}</Heading>
-      {note ? <WarningBanner title="结论不稳定" description={`${note}。再多贴几条，按平台和按题的比例会更稳。`} /> : null}
+      {note ? <TipBanner id="unstable" page="monitor" status="warning" title={`${note}。再多贴几条，比例会更稳。`} /> : null}
       <Text>
         样本量 {metrics.observations}，覆盖 {metrics.promptsCovered} 题。提及率 {percent(metrics.mentionRate)}，引用率 {percent(metrics.citationRate)}
         ，声量占比 {percent(metrics.shareOfVoice)}，平均排名 {formatRank(metrics.averageRank)}。

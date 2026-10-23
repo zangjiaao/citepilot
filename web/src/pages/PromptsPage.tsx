@@ -104,7 +104,7 @@ export function PromptsPage() {
     >
       <VStack gap={4}>
         <ErrorBanner message={error} />
-        {notice ? <InfoBanner title={notice} /> : null}
+        {notice ? <InfoBanner title={notice} onDismiss={() => setNotice('')} /> : null}
         {llm && !llm.enabled ? <Text type="supporting">未配置密钥，生成会使用模板，并跳过已经存在的问法。</Text> : null}
         <HStack gap={2} wrap="wrap" vAlign="end">
           <Selector

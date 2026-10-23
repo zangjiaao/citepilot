@@ -13,7 +13,7 @@ import type { CycleTrendPoint, Overview } from '../../../shared/types.ts'
 import { api } from '../api'
 import { formatRank, percent } from '../format'
 import { useStudio } from '../studio'
-import { ErrorBanner, InfoBanner, PageFrame } from '../ui'
+import { ErrorBanner, PageFrame, TipBanner } from '../ui'
 
 export function OverviewPage() {
   const { studioId, llm, loading, error: shellError } = useStudio()
@@ -45,15 +45,8 @@ export function OverviewPage() {
         <ErrorBanner message={shellError || error} />
         {loading ? <Text type="supporting">正在读取品牌…</Text> : null}
         {!loading && !studioId ? <Text>还没有品牌。到品牌页新建一个。</Text> : null}
-        {llm && !llm.enabled ? (
-          <InfoBanner
-            title="当前使用规则和模板"
-            description="没有配置模型密钥。题库、回答摘要、本品牌情感和诊断建议都会走本地规则。到「设置」里添加模型，或配置 DEEPSEEK_API_KEY。配上之后，摘要和正/中/负情感改由模型标注；品牌是否出现、排名和网址仍以规则为准。"
-          />
-        ) : null}
-        {llm?.enabled ? (
-          <InfoBanner title={`已连接 ${llm.label || llm.model}`} description="生成题目和诊断建议会优先使用这套模型。模型失败时自动退回模板和规则。" />
-        ) : null}
+        {llm && !llm.enabled ? <TipBanner id="llm-off" page="overview" title="没有模型密钥，题库和诊断走本地规则。到设置里配上密钥后再用模型。" /> : null}
+        {llm?.enabled ? <TipBanner id="llm-on" page="overview" title={`已连接 ${llm.label || llm.model}，生成和诊断优先用这套模型。`} /> : null}
         <VStack gap={3}>
           <Heading level={2}>监测循环</Heading>
           {PRODUCT_LOOP.map((step) => (

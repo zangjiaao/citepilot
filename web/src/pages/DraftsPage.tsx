@@ -28,7 +28,7 @@ import { api } from '../api'
 import { formatTime } from '../format'
 import { MarkdownBodyEditor, type MarkdownBodyEditorHandle } from '../markdownEditor'
 import { useStudio } from '../studio'
-import { ErrorBanner, InfoBanner, PageFrame, WarningBanner } from '../ui'
+import { ErrorBanner, InfoBanner, PageFrame, TipBanner } from '../ui'
 
 const styles = stylex.create({
   page: {
@@ -753,16 +753,10 @@ export function DraftsPage() {
         <Badge variant="neutral" label="生成预览" />
         <Heading level={2}>草稿</Heading>
       </HStack>
-      {missing.length > 0 ? <WarningBanner title="信息不足" description={missing.join(' ')} /> : null}
-      {flags.length > 0 ? (
-        <VStack gap={2}>
-          <InfoBanner title="已标出空话" description="套话已改成资料里的事实，或换成【待补充】。发布前请补上这些空位。" />
-          {flags.map((flag) => (
-            <Text key={flag} color="secondary">
-              {flag}
-            </Text>
-          ))}
-        </VStack>
+      {missing.length > 0 ? (
+        <TipBanner id="gaps" page="drafts" status="warning" title={missing.length > 1 ? `${missing[0]}。另外还有 ${missing.length - 1} 条。` : `${missing[0]}。`} />
+      ) : flags.length > 0 ? (
+        <TipBanner id="flags" page="drafts" title="空话已换成【待补充】，发布前补上。" />
       ) : null}
       <Text color="secondary">
         {channelLabel(preview.channel)} · {SOURCE_LABEL[preview.source] ?? preview.source}
@@ -876,9 +870,10 @@ export function DraftsPage() {
           <Button label="← 内容起草" size="sm" variant="ghost" onClick={() => navigate('/drafts')} />
         </HStack>
         <ErrorBanner message={error} />
-        {notice ? <InfoBanner title={notice} /> : null}
-        {llm && !llm.enabled ? (
-          <InfoBanner title="当前使用品牌资料模板" description="没有模型密钥时，草稿按渠道套模板。到「设置」配上密钥后，模型会在同一份事实边界里改写。" />
+        {notice ? (
+          <InfoBanner title={notice} onDismiss={() => setNotice('')} />
+        ) : llm && !llm.enabled ? (
+          <TipBanner id="llm-template" page="drafts" title="没有模型密钥，草稿按素材模板写。到设置配上密钥后再改写。" />
         ) : null}
         <StackItem size="fill" xstyle={styles.grow}>
           {workspace}

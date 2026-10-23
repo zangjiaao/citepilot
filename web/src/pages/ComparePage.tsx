@@ -12,7 +12,7 @@ import { SELF_BRAND_KEY, type CompareReport, type Cycle, type CycleMetrics } fro
 import { api } from '../api'
 import { formatRank, percent, sampleFraction } from '../format'
 import { useStudio } from '../studio'
-import { ErrorBanner, PageFrame, WarningBanner } from '../ui'
+import { ErrorBanner, PageFrame, TipBanner } from '../ui'
 
 interface CompareTableRow extends Record<string, unknown> {
   promptId: string
@@ -124,7 +124,7 @@ function RateBlock({ title, metrics }: { title: string; metrics?: CycleMetrics }
     <Section>
       <VStack gap={1}>
         <Heading level={2}>{title}</Heading>
-        {note ? <WarningBanner title="结论不稳定" description={note} /> : null}
+        {note ? <TipBanner id={`unstable-${title}`} page="compare" status="warning" title={note} /> : null}
         <Text>
           样本量 {metrics?.observations ?? 0}，覆盖 {metrics?.promptsCovered ?? 0} 题
         </Text>

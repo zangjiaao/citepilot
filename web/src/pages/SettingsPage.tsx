@@ -8,7 +8,7 @@ import { TextInput } from '@astryxdesign/core/TextInput'
 import { VStack } from '@astryxdesign/core/VStack'
 import { LLM_PRESETS, type LlmProviderId } from '../../../shared/llmProviders.ts'
 import { ApiError, api } from '../api'
-import { ErrorBanner, InfoBanner, PageFrame } from '../ui'
+import { ErrorBanner, InfoBanner, PageFrame, TipBanner, restoreDismissedTips } from '../ui'
 
 interface PublicConfig {
   id: string
@@ -166,17 +166,19 @@ export function SettingsPage() {
     <PageFrame title="模型配置" description="内容起草和回答分析可以各用一套 OpenAI 兼容接口。密钥只在保存时写入，之后只显示末四位。">
       <VStack gap={4}>
         <ErrorBanner message={error} />
-        {notice ? <InfoBanner title={notice} /> : null}
+        {notice ? <InfoBanner title={notice} onDismiss={() => setNotice('')} /> : null}
         {data?.active ? (
-          <InfoBanner
-            title={data.active.enabled ? `当前：${data.active.label || data.active.model}` : '还没有可用模型'}
-            description={
+          <TipBanner
+            id={data.active.enabled ? 'model-on' : 'model-off'}
+            page="settings"
+            title={
               data.active.enabled
-                ? `内容生成用 ${data.active.generate.label || data.active.generate.model || '环境变量'}。分析用 ${data.active.analyze.label || data.active.analyze.model || '环境变量'}。没有保存配置时，仍使用 DEEPSEEK_API_KEY。`
-                : '可以在这里添加配置，或在 .dev.vars 里设置 DEEPSEEK_API_KEY。没有密钥时，起草和摘要走模板与规则。'
+                ? `当前模型：${data.active.label || data.active.model}。生成和分析都优先用它。`
+                : '还没有可用模型。在这里添加，或在 .dev.vars 设置 DEEPSEEK_API_KEY。'
             }
           />
         ) : null}
+        <Button label="恢复提示" size="sm" variant="ghost" onClick={() => restoreDismissedTips()} />
         <VStack gap={2}>
           <Heading level={2}>已保存的配置</Heading>
           {(data?.configs ?? []).map((item) => (

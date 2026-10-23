@@ -389,7 +389,7 @@ export function LibraryEditPage() {
           <Button label="← 素材库" size="sm" variant="ghost" onClick={back} />
         </HStack>
         <ErrorBanner message={error} />
-        {notice ? <InfoBanner title={notice} /> : null}
+        {notice ? <InfoBanner title={notice} onDismiss={() => setNotice('')} /> : null}
         <StackItem size="fill" xstyle={styles.grow}>
           {workspace}
         </StackItem>
