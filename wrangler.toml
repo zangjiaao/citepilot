@@ -1,5 +1,4 @@
-# CitePilot Worker. database_id 是本地占位 UUID。
-# 部署前运行 `wrangler d1 create citepilot`，把返回的 id 写回这里。
+# CitePilot Worker. database_id 是已创建的 citepilot D1，不是占位。
 # 密钥不要写进本文件：本地用 .dev.vars，线上用 `wrangler secret put`。
 "$schema" = "./node_modules/wrangler/config-schema.json"
 name = "citepilot"
@@ -21,6 +20,9 @@ enabled = true
 head_sampling_rate = 0.01
 
 [assets]
+# 直接用本文件部署时 wrangler 要求 directory。值与 vite.config.ts 的 build.outDir 一致。
+# `npm run deploy` 用的是 vite build 生成的 dist/client/citepilot/wrangler.json，里面的 directory 会改成客户端产物。
+directory = "./dist/client"
 not_found_handling = "single-page-application"
 binding = "ASSETS"
 run_worker_first = ["/api/*"]
@@ -32,7 +34,7 @@ DEEPSEEK_MODEL = "deepseek-chat"
 [[d1_databases]]
 binding = "DB"
 database_name = "citepilot"
-database_id = "11111111-1111-4111-8111-111111111111"
+database_id = "7a561eed-e972-444e-8341-e65764128b31"
 migrations_dir = "migrations"
 
 # 素材图片。本地 `npm run dev` 使用 Wrangler 的本地 R2。
