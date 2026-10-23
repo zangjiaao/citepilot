@@ -6,6 +6,7 @@ import { buildDiagnosis } from '../shared/diagnose.ts'
 import { acceptDraft, channelLabel, coerceUrlHint, copyDraftTitle, DRAFT_CHANNELS, isDraftChannel, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
 import { parseAnswer, summarize } from '../shared/parseAnswer.ts'
 import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.ts'
+import { buildOpsCockpit } from '../shared/overviewOps.ts'
 import { addedPromptSummary, assemblePromptGeneration, assessPromptCoverage, isCluster, normalizeQuestion, selectGapPrompts } from '../shared/prompts.ts'
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
@@ -129,11 +130,13 @@ app.delete('/api/studios/:id', async (c) => {
 
 app.get('/api/studios/:id/overview', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
-  const [prompts, storedObservations, cycles, diagnoses] = await Promise.all([
+  const [prompts, storedObservations, cycles, diagnoses, assets, drafts] = await Promise.all([
     listPrompts(c.env.DB, studio.id),
     listObservations(c.env.DB, studio.id),
     listCycles(c.env.DB, studio.id),
     listDiagnoses(c.env.DB, studio.id),
+    listAssets(c.env.DB, studio.id),
+    listDrafts(c.env.DB, studio.id),
   ])
   const observations = hydrateObservations(storedObservations, studio)
   const scope = metricScope(studio)
@@ -172,6 +175,7 @@ app.get('/api/studios/:id/overview', async (c) => {
           fail: latest.checklist.filter((item) => item.status === 'fail').length,
         }
         : null,
+    ops: buildOpsCockpit({ studio, assets, prompts, drafts, observations, cycles }),
     trend: ordered.flatMap((cycle) => {
       const rows = observations.filter((item) => item.cycleId === cycle.id)
       if (rows.length === 0) return []

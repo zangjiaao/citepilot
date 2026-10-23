@@ -190,6 +190,22 @@ function limitGaps(gaps: PromptGap[]): PromptGap[] {
     .map((item) => item.gap)
 }
 
+export function uncoveredAssets(existing: string[], assets: Asset[]): Asset[] {
+  const corpus = existing.join('\n')
+  const found: Asset[] = []
+  for (const asset of assets) {
+    if (asset.publicity === 'private') continue
+    const anchors = assetAnchors(asset)
+    if (anchors.length === 0) continue
+    if (!hits(corpus, anchors)) found.push(asset)
+  }
+  return found
+}
+
+export function assetGapLabel(asset: Asset): string {
+  return focusTag(asset) || clipTheme(asset.title, 12) || '素材'
+}
+
 export function assessPromptCoverage(studio: CoverageStudio, existing: string[], assets: Asset[] = []): PromptCoverage {
   const corpus = existing.join('\n')
   const gaps: PromptGap[] = []
@@ -202,19 +218,18 @@ export function assessPromptCoverage(studio: CoverageStudio, existing: string[],
     gaps.push(gap)
   }
 
+  const uncoveredList = uncoveredAssets(existing, assets)
+  const uncoveredIds = new Set(uncoveredList.map((asset) => asset.id))
   const coveredAssets: Asset[] = []
-  const uncoveredAssets: Asset[] = []
   for (const asset of assets) {
     if (asset.publicity === 'private') continue
-    const anchors = assetAnchors(asset)
-    if (anchors.length === 0) continue
-    if (hits(corpus, anchors)) coveredAssets.push(asset)
-    else uncoveredAssets.push(asset)
+    if (assetAnchors(asset).length === 0 || uncoveredIds.has(asset.id)) continue
+    coveredAssets.push(asset)
   }
-  for (const asset of uncoveredAssets) push(assetGap(asset, assetAnchors(asset)))
+  for (const asset of uncoveredList) push(assetGap(asset, assetAnchors(asset)))
 
   const blob = coveredAssets.map(assetBlob).join('\n')
-  const pendingBlob = uncoveredAssets.map(assetBlob).join('\n')
+  const pendingBlob = uncoveredList.map(assetBlob).join('\n')
   const name = studio.name.trim()
   const brandCovered = name.length < 2 || corpus.includes(name)
 

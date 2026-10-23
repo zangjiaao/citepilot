@@ -211,9 +211,43 @@ export interface CycleTrendPoint {
   stable: boolean
 }
 
+export interface OpsAction {
+  id: string
+  title: string
+  detail: string
+  href: string
+  cta: string
+}
+
+export interface OpsActivity {
+  id: string
+  kind: 'draft' | 'observation'
+  title: string
+  detail: string
+  href: string
+  at: string
+}
+
+export interface OpsCockpit {
+  empty: boolean
+  counts: {
+    publicAssets: number
+    products: number
+    cases: number
+    prompts: number
+    drafts: number
+    mentionedPrompts: number
+    mentionRate: number | null
+    cycleName: string
+  }
+  actions: OpsAction[]
+  recent: OpsActivity[]
+}
+
 export interface Overview {
   studio: Studio
   llm: { enabled: boolean; model: string; baseUrl: string }
+  ops: OpsCockpit
   counts: {
     prompts: number
     observations: number

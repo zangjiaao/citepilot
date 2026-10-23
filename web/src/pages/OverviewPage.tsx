@@ -1,21 +1,20 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Button } from '@astryxdesign/core/Button'
 import { Card } from '@astryxdesign/core/Card'
-import { Collapsible } from '@astryxdesign/core/Collapsible'
 import { Grid } from '@astryxdesign/core/Grid'
 import { Heading } from '@astryxdesign/core/Heading'
+import { HStack } from '@astryxdesign/core/HStack'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
-import { ProgressBar } from '@astryxdesign/core/ProgressBar'
-import { NEXT_BASELINE_NOTE, PRODUCT_LOOP } from '../../../shared/loop.ts'
-import { PLAYBOOK } from '../../../shared/playbook.ts'
-import { CLUSTER_LABEL, CYCLE_KIND_LABEL } from '../../../shared/platforms.ts'
-import type { CycleTrendPoint, Overview } from '../../../shared/types.ts'
+import type { Overview } from '../../../shared/types.ts'
 import { api } from '../api'
-import { formatRank, percent } from '../format'
+import { formatTime, percent } from '../format'
 import { useStudio } from '../studio'
 import { ErrorBanner, PageFrame, TipBanner } from '../ui'
 
 export function OverviewPage() {
+  const navigate = useNavigate()
   const { studioId, llm, loading, error: shellError } = useStudio()
   const [overview, setOverview] = useState<Overview | null>(null)
   const [error, setError] = useState('')
@@ -35,107 +34,117 @@ export function OverviewPage() {
     }
   }, [studioId])
 
-  const counts = overview?.counts
+  const ops = overview?.ops
   return (
-    <PageFrame
-      title="GEO/AEO 监测"
-      description="先做基线监测，再整站和内容分发，过一段时间用同一套题再测，然后与基线对比，看提及和引用有没有抬升。不登录、不爬取任何对话产品。"
-    >
+    <PageFrame title="概览" description="看这个品牌的素材、题库、草稿和监测，下一步直接点进去。">
       <VStack gap={4}>
         <ErrorBanner message={shellError || error} />
         {loading ? <Text type="supporting">正在读取品牌…</Text> : null}
         {!loading && !studioId ? <Text>还没有品牌。到品牌页新建一个。</Text> : null}
-        {llm && !llm.enabled ? <TipBanner id="llm-off" page="overview" title="没有模型密钥，题库和诊断走本地规则。到设置里配上密钥后再用模型。" /> : null}
-        {llm?.enabled ? <TipBanner id="llm-on" page="overview" title={`已连接 ${llm.label || llm.model}，生成和诊断优先用这套模型。`} /> : null}
-        <VStack gap={3}>
-          <Heading level={2}>监测循环</Heading>
-          {PRODUCT_LOOP.map((step) => (
-            <VStack key={step.step} gap={1}>
-              <Heading level={3}>
-                {step.step}. {step.title}
-              </Heading>
-              <Text color="secondary">{step.detail}</Text>
+        {ops?.empty ? (
+          <Card>
+            <VStack gap={3}>
+              <Heading level={2}>先加产品或案例素材</Heading>
+              <Text color="secondary">先把产品和客户场景放进素材库，再到题库评估并补盲区，然后起草。</Text>
+              <HStack gap={2} wrap="wrap">
+                <Button label="去素材库" variant="primary" onClick={() => navigate('/library')} />
+                <Button label="去题库" variant="secondary" onClick={() => navigate('/prompts')} />
+                <Button label="去起草" variant="secondary" onClick={() => navigate('/drafts/new')} />
+              </HStack>
             </VStack>
-          ))}
-          <Text color="secondary">{NEXT_BASELINE_NOTE}</Text>
-        </VStack>
-        {overview ? (
+          </Card>
+        ) : null}
+        {ops && !ops.empty ? (
           <Grid columns={{ minWidth: 180, max: 4 }} gap={3}>
-            <Metric label="题库" value={String(counts?.prompts ?? 0)} detail={clusterDetail(counts?.byCluster)} />
-            <Metric label="监测样本" value={String(counts?.observations ?? 0)} detail="同一题的多条回答各算一个样本" />
-            <Metric
-              label="最早一批提及率"
-              value={percent(overview.earliest?.metrics.mentionRate)}
-              detail={overview.earliest ? `${overview.earliest.name} · 声量 ${percent(overview.earliest.metrics.shareOfVoice)}` : '还没有抽查批次'}
+            <StatusCard
+              label="可公开素材"
+              value={String(ops.counts.publicAssets)}
+              detail={ops.counts.publicAssets === 0 ? '还没有可公开素材' : `产品 ${ops.counts.products} · 案例 ${ops.counts.cases}`}
+              cta="打开素材库"
+              onOpen={() => navigate('/library')}
             />
-            <Metric
-              label="最近一批提及率"
-              value={percent(overview.latest?.metrics.mentionRate)}
-              detail={
-                overview.latest
-                  ? overview.latest.id === overview.earliest?.id
-                    ? `${overview.latest.name} · 再抽查一次就能看趋势`
-                    : `${overview.latest.name} · 声量 ${percent(overview.latest.metrics.shareOfVoice)} · 样本 ${overview.latest.metrics.observations}`
-                  : '还没有抽查批次'
-              }
+            <StatusCard
+              label="题库"
+              value={String(ops.counts.prompts)}
+              detail={promptDetail(ops)}
+              cta="打开题库"
+              onOpen={() => navigate('/prompts')}
+            />
+            <StatusCard
+              label="草稿"
+              value={String(ops.counts.drafts)}
+              detail={ops.counts.drafts === 0 ? '还没有草稿。发布在站外完成' : '发布在站外完成，这里只记草稿'}
+              cta={ops.counts.drafts === 0 ? '去起草' : '打开草稿'}
+              onOpen={() => navigate(ops.counts.drafts === 0 ? '/drafts/new' : '/drafts')}
+            />
+            <StatusCard
+              label="近期被提及的题"
+              value={ops.counts.cycleName ? String(ops.counts.mentionedPrompts) : '—'}
+              detail={monitorDetail(ops)}
+              cta="打开监测"
+              onOpen={() => navigate('/monitor')}
             />
           </Grid>
         ) : null}
-        {overview && overview.trend.length > 0 ? <Trend trend={overview.trend} /> : null}
-        <Collapsible defaultIsOpen={false} trigger="四周自测（可选）">
+        {ops && !ops.empty ? (
           <VStack gap={3}>
-            <Text color="secondary">只在第一次验证时用。日常按上面的监测循环，不用按周。</Text>
-            {PLAYBOOK.map((step) => (
-              <VStack key={step.week} gap={1}>
-                <Heading level={3}>
-                  {step.week} · {step.title}
-                </Heading>
-                <Text color="secondary">{step.detail}</Text>
-              </VStack>
+            <Heading level={2}>下一步</Heading>
+            {ops.actions.map((action) => (
+              <Card key={action.id}>
+                <VStack gap={2}>
+                  <Heading level={3}>{action.title}</Heading>
+                  <Text color="secondary">{action.detail}</Text>
+                  <HStack>
+                    <Button label={action.cta} variant={action.id === 'steady' ? 'secondary' : 'primary'} onClick={() => navigate(action.href)} />
+                  </HStack>
+                </VStack>
+              </Card>
             ))}
           </VStack>
-        </Collapsible>
+        ) : null}
+        {ops && !ops.empty ? (
+          <VStack gap={3}>
+            <Heading level={2}>最近</Heading>
+            {ops.recent.length === 0 ? <Text color="secondary">还没有草稿或监测记录。</Text> : null}
+            {ops.recent.map((item) => (
+              <Card key={`${item.kind}-${item.id}`}>
+                <HStack gap={3} vAlign="center" wrap="wrap">
+                  <VStack gap={1}>
+                    <Text>{item.title}</Text>
+                    <Text type="supporting" color="secondary">
+                      {item.detail} · {formatTime(item.at)}
+                    </Text>
+                  </VStack>
+                  <Button label="打开" size="sm" variant="ghost" onClick={() => navigate(item.href)} />
+                </HStack>
+              </Card>
+            ))}
+          </VStack>
+        ) : null}
+        {llm && !llm.enabled ? <TipBanner id="llm-off" page="overview" title="没有模型密钥，题库和诊断走本地规则。到设置里配上密钥后再用模型。" /> : null}
+        {llm?.enabled ? <TipBanner id="llm-on" page="overview" title={`已连接 ${llm.label || llm.model}，生成和诊断优先用这套模型。`} /> : null}
       </VStack>
     </PageFrame>
   )
 }
 
-function Trend({ trend }: { trend: CycleTrendPoint[] }) {
-  return (
-    <VStack gap={3}>
-      <Heading level={2}>批次趋势</Heading>
-      <Text color="secondary">按批次看提及率和声量占比。条越长越高。样本量少于 5 时，这一批的结论不稳定。</Text>
-      {trend.map((point) => (
-        <VStack key={point.id} gap={2}>
-          <Text>
-            {point.name} · {CYCLE_KIND_LABEL[point.kind] ?? point.kind} · 样本 {point.samples}
-            {point.stable ? '' : ' · 结论不稳'}
-            {` · 平均排名 ${formatRank(point.averageRank)}`}
-          </Text>
-          <ProgressBar
-            label="提及率"
-            value={(point.mentionRate ?? 0) * 100}
-            hasValueLabel
-            variant={point.stable ? 'accent' : 'warning'}
-            formatValueLabel={() => percent(point.mentionRate)}
-          />
-          <ProgressBar
-            label="声量占比"
-            value={(point.shareOfVoice ?? 0) * 100}
-            hasValueLabel
-            variant="neutral"
-            formatValueLabel={() => percent(point.shareOfVoice)}
-          />
-        </VStack>
-      ))}
-    </VStack>
-  )
+function promptDetail(ops: NonNullable<Overview['ops']>): string {
+  const coverage = ops.actions.find((item) => item.id === 'coverage' || item.id === 'prompts' || item.id === 'brand-gaps')
+  if (coverage) return coverage.title
+  if (ops.counts.prompts === 0) return '还没有题'
+  return '已盖住当前素材'
 }
 
-function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
+function monitorDetail(ops: NonNullable<Overview['ops']>): string {
+  if (!ops.counts.cycleName) return '还没有监测轮次'
+  const rate = percent(ops.counts.mentionRate)
+  return `${ops.counts.cycleName} · 样本提及率 ${rate}`
+}
+
+function StatusCard({ label, value, detail, cta, onOpen }: { label: string; value: string; detail: string; cta: string; onOpen: () => void }) {
   return (
     <Card>
-      <VStack gap={1}>
+      <VStack gap={2}>
         <Text type="supporting" color="secondary">
           {label}
         </Text>
@@ -143,13 +152,8 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
         <Text type="supporting" color="secondary">
           {detail}
         </Text>
+        <Button label={cta} size="sm" variant="ghost" onClick={onOpen} />
       </VStack>
     </Card>
   )
-}
-
-function clusterDetail(byCluster: Overview['counts']['byCluster'] | undefined): string {
-  if (!byCluster) return ''
-  const keys = ['brand', 'category', 'comparison', 'scenario'] as const
-  return keys.map((key) => `${CLUSTER_LABEL[key]} ${byCluster[key]}`).join(' · ')
 }
