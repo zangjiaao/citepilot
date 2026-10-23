@@ -638,7 +638,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     try {
       const raw = await completeJson(
         writer,
-        '你在做硬广和水文自检。硬广、立即咨询、行业领先、赋能数字化、一眼广告腔，以及自夸和未授权数字，都改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。软植入若已经在故事里回答了题目，不要再追加品牌收束；没有题目时才在结尾留一句品牌或官网。不要写成水文。只输出 JSON：{"body":"..."}',
+        '你在做硬广和水文自检。硬广、立即咨询、行业领先、赋能数字化、一眼广告腔，以及自夸和未授权数字，都改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。软植入结尾仍留一句品牌或官网，用来标明出处；不要在中段反复写品牌，不要写成硬广或水文。只输出 JSON：{"body":"..."}',
         `要改的句子：${polished.flags.join('\n')}\n原文：${brief.body}`,
         0.2,
       )
@@ -652,13 +652,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     }
     polished = rewriteGenericSentences(brief.body, selected, options.allowBragging)
   }
-  brief = applyBrandMention(
-    { ...brief, body: polished.body },
-    studio.name,
-    studio.website,
-    options.brandMention,
-    options.brandMention === 'light' && Boolean(promptText.trim()),
-  )
+  brief = applyBrandMention({ ...brief, body: polished.body }, studio.name, studio.website, options.brandMention)
   brief = {
     ...brief,
     body: backfillDraftImages(brief.body, draftImages(selected)),

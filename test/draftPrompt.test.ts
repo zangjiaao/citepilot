@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyBrandPageSave, blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { emptyDetails, readAssetDraft, type Asset } from '../shared/assets.ts'
-import { applyBrandMention, assembleDraftPrompt, materialDraft, NO_FABRICATION_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, softCloser } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, IMPLANT_LEVELS, IMPLANT_PURPOSE, materialDraft, NO_FABRICATION_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -103,10 +103,15 @@ describe('assembleDraftPrompt', () => {
     expect(prompt.system).toContain('知识库怎么验收？')
     expect(prompt.system).toContain('不要写「我们是行业领先」')
     expect(prompt.system).toContain('立即咨询')
-    expect(prompt.system).toContain('被 AI 引用')
+    expect(prompt.system).toContain('被引用')
     expect(prompt.system).toContain('可以直接回答')
-    expect(prompt.system).not.toContain(softCloser(studio.name, studio.website))
+    expect(prompt.system).toContain(softCloser(studio.name, studio.website))
+    expect(prompt.system).toContain('结尾必须有且只有一句软收束')
+    expect(prompt.system).not.toContain('不要为了植入再追加品牌收束')
     expect(prompt.system).not.toContain('也可以完全不出现')
+    expect(IMPLANT_PURPOSE).toContain('品牌或官网')
+    expect(SOFT_IMPLANT_HINT).toContain('真实官网')
+    expect(IMPLANT_LEVELS.find((item) => item.id === 'light')?.description).toContain('真实官网')
     expect(prompt.user).toContain('不要以题目开头')
     expect(prompt.user).toContain(studio.website)
     expect(prompt.user).toContain('不要写成 example.com')
@@ -144,15 +149,17 @@ describe('self check', () => {
 })
 
 describe('implant intensity', () => {
-  it('answers a linked question inside the story and only uses a closer when no question is available', () => {
+  it('answers a linked question inside the story and still leaves one soft attribution', () => {
     const closer = softCloser(studio.name, studio.website)
     const draft = materialDraft(studio, [metricAsset, ideaAsset], '/guides/how-we-deliver', 'light', '知识库怎么验收？')
     expect(draft.body.startsWith('客户的')).toBe(true)
     expect(draft.body).not.toContain('知识库怎么验收')
     expect(draft.body).not.toContain('问：')
-    expect(draft.body).not.toContain(studio.name)
-    expect(draft.body).not.toContain(closer)
-    expect(draft.body).toContain('可以核对的变化是')
+    const answerAt = draft.body.indexOf('可以核对的变化是')
+    expect(answerAt).toBeGreaterThan(0)
+    expect(answerAt).toBeLessThan(draft.body.lastIndexOf(closer))
+    expect(draft.body.trim().endsWith(closer)).toBe(true)
+    expect(draft.body.split(studio.name).length - 1).toBe(1)
     expect(draft.body).toContain('45')
     expect(draft.citeSentences.some((item) => item.includes('可以核对的变化是'))).toBe(true)
     expect(draft.citeSentences.every((item) => !item.includes(studio.name))).toBe(true)

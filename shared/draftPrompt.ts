@@ -49,13 +49,13 @@ const HARD_SELL =
 
 export const IMPLANT_LEVELS = [
   { id: 'none', label: '不植入', description: '不把题目写进正文，也不强行带品牌。' },
-  { id: 'light', label: '软植入', description: '把一道相关题目的答案写进故事，方便发布后被 AI 引用。' },
+  { id: 'light', label: '软植入', description: '把相关题目的答案写进故事，结尾轻轻留下品牌名或真实官网。' },
   { id: 'guide', label: '明确种草', description: '题目可写可不写。结尾会更明确地写出品牌、官网和下一步。' },
 ] as const
 
-export const IMPLANT_PURPOSE = '为了让相关题目更容易被 AI 引用；正文仍以素材故事为主'
+export const IMPLANT_PURPOSE = '为了让相关题目更容易被 AI 引用：故事里写出能对上这道题的事实，并轻轻留下品牌或官网。正文仍以素材故事为主。'
 
-export const SOFT_IMPLANT_HINT = '会把这道题的答案写进故事，引用句要能直接回答它。'
+export const SOFT_IMPLANT_HINT = '会把这道题的答案写进故事，引用句要能直接回答它，结尾再轻轻留下一次品牌或真实官网。'
 
 export const PUBLISH_PLATFORMS = [
   { id: 'xiaohongshu', label: '小红书 / 即刻短帖', contentType: 'short-post', channel: 'xiaohongshu', format: '短帖' },
@@ -272,17 +272,11 @@ export function softCloser(brand: string, website: string): string {
   return ''
 }
 
-export function applyBrandMention(
-  brief: DraftBrief,
-  brand: string,
-  website: string,
-  mention: BrandMention,
-  linkedQuestion = false,
-): DraftBrief {
+export function applyBrandMention(brief: DraftBrief, brand: string, website: string, mention: BrandMention): DraftBrief {
   if (mention === 'light') {
     const closer = softCloser(brand, website)
     const cleaned = stripLightPromo(brief.body, brand, website)
-    const body = linkedQuestion || !closer || cleaned.includes(closer) ? cleaned : `${cleaned}\n\n${closer}`.trim()
+    const body = !closer || cleaned.includes(closer) ? cleaned : `${cleaned}\n\n${closer}`.trim()
     const citeSentences = brief.citeSentences
       .map((item) => stripBrand(item, brand))
       .filter((item) => item.length >= 12 && item !== closer && !item.startsWith('具体做法可以看'))
@@ -336,7 +330,6 @@ export function materialDraft(
     studio.name,
     studio.website,
     mention,
-    mention === 'light' && Boolean(linked),
   )
   return { ...mentioned, body: withDraftImages(mentioned.body, assets) }
 }
@@ -347,10 +340,12 @@ function implantRule(mention: BrandMention, promptText: string | undefined, bran
   }
   if (mention === 'light') {
     const closer = softCloser(brand, website)
-    if (promptText?.trim()) {
-      return `植入强度：软植入。目的是让这道题发布后更容易被 AI 引用，不是喊品牌名。正文仍是素材里的故事，不能改成广告或水文。先写客户的问题、前后数据或一处细节。在故事中段用一段短叙述回答这道题，展示已经发生的变化，不要当标题或开头，不要标注 GEO，不要堆 FAQ：${promptText.trim()}。不要写立即咨询，不要写「我们是行业领先」，不要在中段堆品牌，也不要为了植入再追加品牌收束。`
-    }
-    return `植入强度：软植入。题库里没有可关联的题目。不要编问答，不要写成水文。正文仍是素材故事。结尾必须有且只有一句软收束：${closer}。不要写立即咨询，不要写「我们是行业领先」。`
+    const question = promptText?.trim()
+    const answer = question
+      ? `在故事中段用一段短叙述回答这道题，展示已经发生的变化，不要当标题或开头，不要标注 GEO，不要堆 FAQ：${question}。`
+      : '题库里没有可关联的题目。不要编问答。'
+    const ending = closer ? `结尾必须有且只有一句软收束：${closer}。` : '没有品牌名时不要编造品牌。'
+    return `植入强度：软植入。目的是让相关题目发布后更容易被引用：故事里写出能对上问题的事实，结尾再轻轻留下一次品牌或官网，方便引用时对上这个工作室。正文仍是素材故事，不能改成广告或水文。先写客户的问题、前后数据或一处细节。${answer}${ending}不要写立即咨询，不要写「我们是行业领先」，不要在中段堆品牌。`
   }
   const optional = promptText?.trim()
     ? `若带了题目，只在故事中段回答，不要当标题：${promptText.trim()}。`
