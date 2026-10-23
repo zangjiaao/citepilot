@@ -1,4 +1,5 @@
 import { allowedNumbers, assetBlock, assetTypeLabel, draftFromAssets, type Asset, type BrandMention } from './assets.ts'
+import { draftImageRule, draftImages, withDraftImages } from './draftImages.ts'
 import { coerceUrlHint, isPlaceholderWebsite } from './drafts.ts'
 import type { DraftBrief, DraftChannel, Studio } from './types.ts'
 
@@ -203,6 +204,7 @@ export function assembleDraftPrompt(
     mentionRule,
     options.allowBragging ? '用户允许提到素材里已经写明的奖项或规模，仍然不能编造。' : '不要写奖项、人数、融资或行业领先。',
     '数字只能来自已授权的指标，或素材正文里已经出现的数字。',
+    draftImageRule(draftImages(assets)),
     '只输出 JSON：{"title":"","body":"","citeSentences":["",""],"urlHint":""}。',
     citeRule,
   ].join('')
@@ -219,6 +221,7 @@ export function assembleDraftPrompt(
     `语气：${options.tone || studio.voice || '像在讲客户那边发生的变化'}`,
     `长度：${lengthHint}`,
     assets.length > 0 ? assets.map((item, index) => `素材 ${index + 1}\n${assetBlock(item)}`).join('\n\n') : '素材：没有勾选。不要用品牌介绍硬写。',
+    draftImageRule(draftImages(assets)),
     `官网：${studio.website || '未填'}。urlHint 只能用这个官网的主机名，不要写成 example.com。`,
     `品牌资料只作背景。定位：${studio.positioning || '未填'}`,
     `禁用词：${studio.bannedWords || '无'}`,
@@ -237,6 +240,7 @@ export function rewriteGenericSentences(body: string, assets: Asset[], allowBrag
   const next = parts.map((part) => {
     const sentence = part.trim()
     if (!sentence || sentence.includes('【待补充')) return part
+    if (/^!\[[^\]]*]\([^)]*\)$/.test(sentence) || /^【图片\d+】$/.test(sentence)) return part
     const brag = !allowBragging && BRAG.test(sentence)
     const generic = GENERIC.test(sentence)
     const hardSell = HARD_SELL.test(sentence)
@@ -327,13 +331,14 @@ export function materialDraft(
     const aside = softAside(assets, body)
     if (aside) body = `${body.trim()}\n\n${aside}`
   }
-  return applyBrandMention(
+  const mentioned = applyBrandMention(
     { ...base, body, citeSentences, urlHint: coerceUrlHint(base.urlHint, studio.website, channelPath) },
     studio.name,
     studio.website,
     mention,
     mention === 'light' && Boolean(linked),
   )
+  return { ...mentioned, body: withDraftImages(mentioned.body, assets) }
 }
 
 function implantRule(mention: BrandMention, promptText: string | undefined, brand: string, website: string): string {

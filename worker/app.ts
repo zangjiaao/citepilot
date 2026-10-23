@@ -10,6 +10,7 @@ import { isCluster, templatePrompts } from '../shared/prompts.ts'
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
 import { applyBrandMention, assembleDraftPrompt, channelForContentType, isContentType, materialDraft, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
+import { backfillDraftImages, draftImages } from '../shared/draftImages.ts'
 import { relatedDraftPrompts } from '../shared/recommendDraft.ts'
 import { readAssetDraft } from '../shared/assets.ts'
 import { acceptPolishedHtml, POLISH_SYSTEM, polishNotesOffline } from '../shared/polishAsset.ts'
@@ -658,7 +659,11 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     options.brandMention,
     options.brandMention === 'light' && Boolean(promptText.trim()),
   )
-  brief = { ...brief, urlHint: coerceUrlHint(brief.urlHint, studio.website, channelMeta?.path ?? '/') }
+  brief = {
+    ...brief,
+    body: backfillDraftImages(brief.body, draftImages(selected)),
+    urlHint: coerceUrlHint(brief.urlHint, studio.website, channelMeta?.path ?? '/'),
+  }
   const gaps = profileGaps(studio, options, selected)
 
   const draft: DraftPreview = {
