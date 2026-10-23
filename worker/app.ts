@@ -44,7 +44,7 @@ import {
 import type { AppBindings } from './env.ts'
 import { HttpError } from './errors.ts'
 import { fetchPublic } from './fetchPage.ts'
-import { acceptGeneratedPrompts, acceptOwnSentiment, acceptSuggestions, acceptSummary, completeJson } from './llm.ts'
+import { acceptGeneratedPrompts, acceptOwnSentiment, acceptSuggestions, acceptSummary, completeJson, DRAFT_TEMPLATE_WARNING, draftModelWarning } from './llm.ts'
 import { registerModelRoutes } from './modelRoutes.ts'
 import { llmStatus, resolveLlm } from './models.ts'
 import { assetFromDraft, countAssets, deleteAsset, getAsset, insertAsset, listAssets, updateAsset } from './assets.ts'
@@ -251,7 +251,8 @@ app.post('/api/studios/:id/prompts/generate', async (c) => {
         warning = '模型题对不上盲区，已改用模板。'
       }
     } catch (error) {
-      warning = error instanceof Error ? error.message : '模型生成失败，已改用模板。'
+      const detail = error instanceof Error ? error.message : '模型生成失败'
+      warning = `${detail}，已改用模板。`
       console.error(JSON.stringify({ message: 'prompt generation fell back', error: warning }))
     }
   }
@@ -616,7 +617,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
   let source: DraftPreview['source'] = 'template'
   let warning = ''
   const writer = await resolveLlm(c.env.DB, c.env, 'generate')
-  const fallbackWarning = '模型这次没有写成完整稿，下面是按素材整理的底稿，不是终稿。可以再点一次生成。'
+  let modelUnavailable = false
   if (writer.enabled) {
     try {
       const prompt = assembleDraftPrompt(
@@ -636,16 +637,17 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
         brief = { ...accepted, urlHint: coerceUrlHint(accepted.urlHint, studio.website, channelMeta?.path ?? '/') }
         source = 'deepseek'
       } else {
-        warning = fallbackWarning
+        warning = DRAFT_TEMPLATE_WARNING
       }
     } catch (error) {
+      modelUnavailable = true
       const message = error instanceof Error ? error.message : String(error)
       console.error(JSON.stringify({ message: 'draft text fell back', error: message }))
-      warning = fallbackWarning
+      warning = draftModelWarning(error)
     }
   }
   let polished = rewriteGenericSentences(brief.body, selected, options.allowBragging)
-  if (writer.enabled && polished.flags.length > 0) {
+  if (writer.enabled && !modelUnavailable && polished.flags.length > 0) {
     try {
       const raw = await completeJson(
         writer,

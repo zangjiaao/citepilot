@@ -632,6 +632,7 @@ export interface StoredLlmConfig {
   provider: string
   baseUrl: string
   model: string
+  apiStyle: 'chat' | 'responses'
   apiKey: string
   temperature: number | null
   maxTokens: number | null
@@ -646,6 +647,7 @@ interface LlmConfigRow {
   provider: string
   base_url: string
   model: string
+  api_style?: string | null
   api_key: string
   temperature: number | null
   max_tokens: number | null
@@ -676,8 +678,8 @@ export async function insertLlmConfig(db: D1Database, config: StoredLlmConfig): 
     db
       .prepare(
         `INSERT INTO llm_configs (
-           id, label, provider, base_url, model, api_key, temperature, max_tokens, is_default, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           id, label, provider, base_url, model, api_key, temperature, max_tokens, is_default, created_at, updated_at, api_style
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         config.id,
@@ -691,6 +693,7 @@ export async function insertLlmConfig(db: D1Database, config: StoredLlmConfig): 
         config.isDefault ? 1 : 0,
         config.createdAt,
         config.updatedAt,
+        config.apiStyle,
       ),
   )
   await db.batch(statements)
@@ -703,7 +706,7 @@ export async function updateLlmConfig(db: D1Database, config: StoredLlmConfig): 
     db
       .prepare(
         `UPDATE llm_configs
-         SET label = ?, provider = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, max_tokens = ?, is_default = ?, updated_at = ?
+         SET label = ?, provider = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, max_tokens = ?, is_default = ?, updated_at = ?, api_style = ?
          WHERE id = ?`,
       )
       .bind(
@@ -716,6 +719,7 @@ export async function updateLlmConfig(db: D1Database, config: StoredLlmConfig): 
         config.maxTokens,
         config.isDefault ? 1 : 0,
         config.updatedAt,
+        config.apiStyle,
         config.id,
       ),
   )
@@ -757,6 +761,7 @@ function mapLlmConfig(row: LlmConfigRow): StoredLlmConfig {
     provider: row.provider,
     baseUrl: row.base_url,
     model: row.model,
+    apiStyle: row.api_style === 'responses' ? 'responses' : 'chat',
     apiKey: row.api_key,
     temperature: row.temperature,
     maxTokens: row.max_tokens,

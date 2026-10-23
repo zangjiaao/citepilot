@@ -6,7 +6,7 @@ import { Selector } from '@astryxdesign/core/Selector'
 import { Text } from '@astryxdesign/core/Text'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { VStack } from '@astryxdesign/core/VStack'
-import { LLM_PRESETS, type LlmProviderId } from '../../../shared/llmProviders.ts'
+import { LLM_API_STYLES, LLM_PRESETS, apiStyleHint, apiStyleLabel, type LlmApiStyle, type LlmProviderId } from '../../../shared/llmProviders.ts'
 import { ApiError, api } from '../api'
 import { ErrorBanner, InfoBanner, PageFrame, TipBanner, restoreDismissedTips } from '../ui'
 
@@ -17,6 +17,7 @@ interface PublicConfig {
   providerLabel: string
   baseUrl: string
   model: string
+  apiStyle: LlmApiStyle
   temperature: number | null
   maxTokens: number | null
   isDefault: boolean
@@ -35,6 +36,7 @@ const emptyForm = {
   provider: 'deepseek' as string,
   baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-chat',
+  apiStyle: 'chat' as LlmApiStyle,
   apiKey: '',
   temperature: '',
   maxTokens: '',
@@ -79,6 +81,7 @@ export function SettingsPage() {
       provider: config.provider,
       baseUrl: config.baseUrl,
       model: config.model,
+      apiStyle: config.apiStyle === 'responses' ? 'responses' : 'chat',
       apiKey: '',
       temperature: config.temperature === null ? '' : String(config.temperature),
       maxTokens: config.maxTokens === null ? '' : String(config.maxTokens),
@@ -93,6 +96,7 @@ export function SettingsPage() {
     provider: form.provider,
     baseUrl: form.baseUrl,
     model: form.model,
+    apiStyle: form.apiStyle,
     apiKey: form.apiKey,
     temperature: form.temperature === '' ? null : Number(form.temperature),
     maxTokens: form.maxTokens === '' ? null : Number(form.maxTokens),
@@ -184,7 +188,7 @@ export function SettingsPage() {
           {(data?.configs ?? []).map((item) => (
             <VStack key={item.id} gap={1}>
               <Text>
-                {item.label} · {item.providerLabel} · {item.model}
+                {item.label} · {item.providerLabel} · {apiStyleLabel(item.apiStyle)} · {item.model}
                 {item.isDefault ? ' · 默认' : ''}
               </Text>
               <Text color="secondary">
@@ -207,8 +211,27 @@ export function SettingsPage() {
             options={LLM_PRESETS.map((item) => ({ value: item.id, label: item.label }))}
             onChange={(value) => applyPreset(value || 'custom')}
           />
-          <TextInput label="接口地址" description="https 的 OpenAI 兼容地址，请求会发到 /chat/completions。" value={form.baseUrl} onChange={(value) => setForm({ ...form, baseUrl: value })} width="100%" />
-          <TextInput label="模型 ID" description="豆包请填接入点 ID，例如 ep- 开头。" value={form.model} onChange={(value) => setForm({ ...form, model: value })} width="100%" />
+          <Selector
+            label="接口类型"
+            value={form.apiStyle}
+            options={LLM_API_STYLES.map((item) => ({ value: item.id, label: item.label }))}
+            onChange={(value) => setForm({ ...form, apiStyle: value === 'responses' ? 'responses' : 'chat' })}
+          />
+          <Text color="secondary">{apiStyleHint(form.apiStyle)}</Text>
+          <TextInput
+            label="接口地址"
+            description={form.apiStyle === 'responses' ? '请求会发到这个地址下的 /responses。' : '请求会发到这个地址下的 /chat/completions。'}
+            value={form.baseUrl}
+            onChange={(value) => setForm({ ...form, baseUrl: value })}
+            width="100%"
+          />
+          <TextInput
+            label="模型 ID"
+            description={form.apiStyle === 'responses' ? 'Responses 模型填服务商的模型 ID，例如 openai/gpt-5.6-sol。' : '豆包请填接入点 ID，例如 ep- 开头。'}
+            value={form.model}
+            onChange={(value) => setForm({ ...form, model: value })}
+            width="100%"
+          />
           <TextInput label="API 密钥" description={form.id ? '留空表示不修改已保存的密钥。' : '只在这次保存时提交，之后不会回显。'} value={form.apiKey} onChange={(value) => setForm({ ...form, apiKey: value })} type="text" width="100%" />
           <TextInput label="温度" description="可空。0 到 2。" value={form.temperature} onChange={(value) => setForm({ ...form, temperature: value })} width="100%" />
           <TextInput label="最大输出" description="可空。整数。" value={form.maxTokens} onChange={(value) => setForm({ ...form, maxTokens: value })} width="100%" />

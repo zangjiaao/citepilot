@@ -27,7 +27,20 @@ export function asStringArray(value: unknown): string[] {
 }
 
 export function completionsUrl(base: string): string {
-  const trimmed = base.trim().replace(/\/+$/, '') || 'https://api.deepseek.com'
-  if (trimmed.endsWith('/chat/completions')) return trimmed
-  return `${trimmed}/chat/completions`
+  const root = endpointRoot(base, 'https://api.deepseek.com')
+  if (root.endsWith('/chat/completions')) return root
+  return `${root}/chat/completions`
+}
+
+export function responsesUrl(base: string): string {
+  const root = endpointRoot(base, 'https://api.openai.com/v1')
+  if (root.endsWith('/responses')) return root
+  return `${root}/responses`
+}
+
+function endpointRoot(base: string, fallback: string): string {
+  const trimmed = base.trim().replace(/\/+$/, '') || fallback
+  if (trimmed.endsWith('/chat/completions')) return trimmed.slice(0, -'/chat/completions'.length)
+  if (trimmed.endsWith('/responses')) return trimmed.slice(0, -'/responses'.length)
+  return trimmed
 }
