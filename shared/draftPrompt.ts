@@ -11,6 +11,9 @@ export const NO_FABRICATION_RULE =
 export const SHOW_DONT_TELL_RULE =
   '写客户的效率变化和已经发生的结果，不要写我们有多强。先给具体问题、前后数据或一处交互，不要先介绍公司。不要用获奖、人数、行业领先、头部、顶级。'
 
+export const PARAGRAPH_RULE =
+  '正文用短段落，段与段之间空一行；一两句就换段；不要大段墙；短帖更碎，长文也避免超过约 3～4 句一段。图片单独成段。'
+
 export const CONTENT_TYPES = [
   { id: 'case-breakdown', label: '案例拆解' },
   { id: 'interaction', label: '交互/设计细节分享' },
@@ -179,9 +182,9 @@ export function assembleDraftPrompt(
 ): { system: string; user: string } {
   const lengthHint =
     options.contentType === 'thread'
-      ? '5 到 8 条短句，每条一行'
+      ? '5 到 8 条短句，每条单独成段，段与段之间空一行'
       : options.contentType === 'short-post'
-        ? '300 字以内'
+        ? '300 字以内。短帖更碎，一两句一段'
         : options.length === 'short'
           ? '400 到 700 字'
           : options.length === 'long'
@@ -204,6 +207,7 @@ export function assembleDraftPrompt(
     mentionRule,
     options.allowBragging ? '用户允许提到素材里已经写明的奖项或规模，仍然不能编造。' : '不要写奖项、人数、融资或行业领先。',
     '数字只能来自已授权的指标，或素材正文里已经出现的数字。',
+    PARAGRAPH_RULE,
     draftImageRule(draftImages(assets)),
     '只输出 JSON：{"title":"","body":"","citeSentences":["",""],"urlHint":""}。',
     citeRule,
@@ -220,6 +224,7 @@ export function assembleDraftPrompt(
     `目标读者：${options.audience || studio.customerProfile || studio.targetCustomers[0] || '做类似事情的同行'}`,
     `语气：${options.tone || studio.voice || '像在讲客户那边发生的变化'}`,
     `长度：${lengthHint}`,
+    PARAGRAPH_RULE,
     assets.length > 0 ? assets.map((item, index) => `素材 ${index + 1}\n${assetBlock(item)}`).join('\n\n') : '素材：没有勾选。不要用品牌介绍硬写。',
     draftImageRule(draftImages(assets)),
     `官网：${studio.website || '未填'}。urlHint 只能用这个官网的主机名，不要写成 example.com。`,
@@ -307,12 +312,94 @@ export function applyBrandMention(brief: DraftBrief, brand: string, website: str
   }
 }
 
+export function paragraphLimit(contentType: string): number {
+  if (contentType === 'thread') return 1
+  if (contentType === 'short-post') return 2
+  return 4
+}
+
+const ATOMIC_LINE = /^(?:!\[[^\]]*]\([^)]*\)|【\s*图片\d+\s*】|#{1,6}\s+\S.*)$/
+const LIST_LINE = /^(?:[-*+]|\d+[.)])\s+\S/
+
+function linePieces(line: string): Array<{ atomic: boolean; text: string }> {
+  const pattern = /!\[[^\]]*]\([^)]*\)|【\s*图片\d+\s*】/g
+  const pieces: Array<{ atomic: boolean; text: string }> = []
+  let last = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(line))) {
+    const before = line.slice(last, match.index).trim()
+    if (before) pieces.push({ atomic: false, text: before })
+    pieces.push({ atomic: true, text: match[0] })
+    last = match.index + match[0].length
+  }
+  const rest = line.slice(last).trim()
+  if (rest) pieces.push({ atomic: false, text: rest })
+  if (pieces.length === 0 && line.trim()) pieces.push({ atomic: false, text: line.trim() })
+  return pieces
+}
+
+function splitSentences(text: string): string[] {
+  const parts = text
+    .split(/(?<=[。！？])/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  return parts.length > 0 ? parts : [text.trim()]
+}
+
+export function paceDraftBody(body: string, maxSentences = 4): string {
+  const cap = Math.max(1, maxSentences)
+  const paragraphs: string[] = []
+  let sentences: string[] = []
+  let list: string[] = []
+  const flushSentences = () => {
+    if (sentences.length === 0) return
+    paragraphs.push(sentences.join(''))
+    sentences = []
+  }
+  const flushList = () => {
+    if (list.length === 0) return
+    paragraphs.push(list.join('\n'))
+    list = []
+  }
+  const lines = body.replace(/\r\n/g, '\n').split('\n')
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+    if (LIST_LINE.test(line)) {
+      flushSentences()
+      list.push(line)
+      continue
+    }
+    flushList()
+    if (ATOMIC_LINE.test(line)) {
+      flushSentences()
+      paragraphs.push(line)
+      continue
+    }
+    for (const piece of linePieces(line)) {
+      if (piece.atomic) {
+        flushSentences()
+        paragraphs.push(piece.text)
+        continue
+      }
+      for (const sentence of splitSentences(piece.text)) {
+        sentences.push(sentence)
+        if (sentences.length >= cap) flushSentences()
+      }
+    }
+  }
+  flushList()
+  flushSentences()
+  return paragraphs.join('\n\n').trim()
+}
+
 export function materialDraft(
   studio: Studio,
   assets: Asset[],
   channelPath: string,
   mention: BrandMention,
   promptText = '',
+  contentType = '',
 ): DraftBrief {
   const base = draftFromAssets(studio, assets, channelPath, mention)
   const linked = promptText.trim()
@@ -331,7 +418,7 @@ export function materialDraft(
     studio.website,
     mention,
   )
-  return { ...mentioned, body: withDraftImages(mentioned.body, assets) }
+  return { ...mentioned, body: paceDraftBody(withDraftImages(mentioned.body, assets), paragraphLimit(contentType)) }
 }
 
 function implantRule(mention: BrandMention, promptText: string | undefined, brand: string, website: string): string {

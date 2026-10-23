@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyBrandPageSave, blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { emptyDetails, readAssetDraft, type Asset } from '../shared/assets.ts'
-import { applyBrandMention, assembleDraftPrompt, IMPLANT_LEVELS, IMPLANT_PURPOSE, materialDraft, NO_FABRICATION_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, IMPLANT_LEVELS, IMPLANT_PURPOSE, materialDraft, NO_FABRICATION_RULE, paceDraftBody, PARAGRAPH_RULE, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -115,6 +115,9 @@ describe('assembleDraftPrompt', () => {
     expect(prompt.user).toContain('不要以题目开头')
     expect(prompt.user).toContain(studio.website)
     expect(prompt.user).toContain('不要写成 example.com')
+    expect(prompt.system).toContain(PARAGRAPH_RULE)
+    expect(prompt.user).toContain('段与段之间空一行')
+    expect(prompt.user).toContain('不要大段墙')
   })
 
   it('keeps an intentional recommendation for the clear call to action', () => {
@@ -145,6 +148,31 @@ describe('self check', () => {
     expect(polished.body).not.toContain('赋能数字化')
     expect(polished.body).not.toContain('广告腔')
     expect(polished.body).toContain('45')
+  })
+})
+
+describe('paragraph pace', () => {
+  it('breaks a wall into short paragraphs and keeps an image line whole', () => {
+    const wall = '第一句。第二句。第三句。第四句。第五句。第六句。\n![手册页](/api/media/studio-chengchuan/abcd1234.jpg)\n【图片2】\n第七句。第八句。第九句。'
+    const paced = paceDraftBody(wall, 4)
+    const blocks = paced.split(/\n\n+/)
+    expect(blocks[0]).toBe('第一句。第二句。第三句。第四句。')
+    expect(blocks[1]).toBe('第五句。第六句。')
+    expect(blocks).toContain('![手册页](/api/media/studio-chengchuan/abcd1234.jpg)')
+    expect(blocks).toContain('【图片2】')
+    expect(paced).not.toMatch(/[。！？][^\n]{0,8}!\[/)
+    const short = paceDraftBody('甲。乙。丙。丁。戊。', 2)
+    expect(short.split(/\n\n+/)).toEqual(['甲。乙。', '丙。丁。', '戊。'])
+  })
+
+  it('keeps the soft closer as its own ending paragraph', () => {
+    const closer = softCloser(studio.name, studio.website)
+    const draft = materialDraft(studio, [metricAsset, ideaAsset], '/faq', 'light', '知识库怎么验收？', 'short-post')
+    expect(draft.body.trim().endsWith(closer)).toBe(true)
+    expect(draft.body).toContain('\n\n')
+    expect(draft.body.split(studio.name).length - 1).toBe(1)
+    const longest = draft.body.split(/\n\n+/).reduce((max, block) => Math.max(max, (block.match(/[。！？]/g) ?? []).length), 0)
+    expect(longest).toBeLessThanOrEqual(2)
   })
 })
 

@@ -9,7 +9,7 @@ import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.t
 import { isCluster, templatePrompts } from '../shared/prompts.ts'
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
-import { applyBrandMention, assembleDraftPrompt, channelForContentType, isContentType, materialDraft, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, channelForContentType, isContentType, materialDraft, paceDraftBody, paragraphLimit, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
 import { backfillDraftImages, draftImages } from '../shared/draftImages.ts'
 import { relatedDraftPrompts } from '../shared/recommendDraft.ts'
 import { readAssetDraft } from '../shared/assets.ts'
@@ -610,7 +610,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
   const context = { studio, channel, promptText, gapLabel, gapDetail }
   let brief =
     selected.length > 0
-      ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention, options.brandMention === 'none' ? '' : promptText)
+      ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention, options.brandMention === 'none' ? '' : promptText, options.contentType)
       : templateDraft(context)
   let source: DraftPreview['source'] = 'template'
   const writer = await resolveLlm(c.env.DB, c.env, 'generate')
@@ -655,7 +655,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
   brief = applyBrandMention({ ...brief, body: polished.body }, studio.name, studio.website, options.brandMention)
   brief = {
     ...brief,
-    body: backfillDraftImages(brief.body, draftImages(selected)),
+    body: paceDraftBody(backfillDraftImages(brief.body, draftImages(selected)), paragraphLimit(options.contentType)),
     urlHint: coerceUrlHint(brief.urlHint, studio.website, channelMeta?.path ?? '/'),
   }
   const gaps = profileGaps(studio, options, selected)
