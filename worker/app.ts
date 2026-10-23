@@ -6,7 +6,7 @@ import { buildDiagnosis } from '../shared/diagnose.ts'
 import { acceptDraft, channelLabel, coerceUrlHint, copyDraftTitle, DRAFT_CHANNELS, isDraftChannel, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
 import { parseAnswer, summarize } from '../shared/parseAnswer.ts'
 import { isCycleKind, normalizePlatform, PLATFORMS } from '../shared/platforms.ts'
-import { assemblePromptGeneration, assetGroundedCount, isCluster, templatePrompts } from '../shared/prompts.ts'
+import { addedPromptSummary, assemblePromptGeneration, assessPromptCoverage, isCluster, normalizeQuestion, selectGapPrompts } from '../shared/prompts.ts'
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
 import { applyBrandMention, assembleDraftPrompt, channelForContentType, finishDraftBody, isContentType, isPublishableDraft, materialDraft, parseAssetIds, parseDraftOptions, placeholderShare, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
@@ -225,37 +225,41 @@ app.post('/api/studios/:id/prompts/generate', async (c) => {
   const existing = await listPrompts(c.env.DB, studio.id)
   const assets = await listAssets(c.env.DB, studio.id)
   const existingTexts = existing.map((item) => item.text)
+  const coverage = assessPromptCoverage(studio, existingTexts, assets)
+  if (coverage.gaps.length === 0) {
+    return c.json({ source: 'covered', warning: '', summary: coverage.summary, prompts: [] })
+  }
   const llm = await resolveLlm(c.env.DB, c.env, 'generate')
-  let created: Prompt[] = []
+  let matched: ReturnType<typeof selectGapPrompts> = []
   let source: 'template' | 'llm' = 'template'
   let warning = ''
   if (llm.enabled) {
     try {
       const brief = assemblePromptGeneration(studio, existingTexts, assets)
       const raw = await completeJson(llm, brief.system, brief.user, 0.7)
-      const accepted = acceptGeneratedPrompts(studio, existingTexts, raw)
-      const publicCount = assets.filter((item) => item.publicity !== 'private').length
-      if (accepted.length >= 4 && (publicCount === 0 || assetGroundedCount(accepted, assets, studio) >= 1)) {
-        created = accepted.map((item) => toPrompt(studio.id, item, 'llm'))
+      const accepted = acceptGeneratedPrompts(studio, existingTexts, raw).filter((item) =>
+        coverage.gaps.some((gap) => gap.anchors.some((anchor) => item.text.includes(anchor))),
+      )
+      if (accepted.length > 0) {
+        matched = accepted
         source = 'llm'
-      } else if (accepted.length >= 4) {
-        warning = '模型题对不上素材库，已改用结合素材的模板。'
       } else {
-        warning = '模型返回的题目不够用，已改用模板。'
+        warning = '模型题对不上盲区，已改用模板。'
       }
     } catch (error) {
       warning = error instanceof Error ? error.message : '模型生成失败，已改用模板。'
       console.error(JSON.stringify({ message: 'prompt generation fell back', error: warning }))
     }
   }
-  if (created.length === 0) {
-    const drafts = templatePrompts(studio, existingTexts, assets)
-    created = drafts.map((item) => toPrompt(studio.id, item, 'template'))
-    source = 'template'
-    if (created.length === 0 && !warning) warning = '模板题都已经在题库里了。'
+  const picked = selectGapPrompts(coverage.gaps, matched)
+  if (matched.length > 0 && picked.some((item) => !matched.some((hit) => normalizeQuestion(hit.text) === normalizeQuestion(item.text)))) {
+    warning = warning || '模型没写到的盲区，已用模板补上。'
   }
-  await insertPrompts(c.env.DB, created)
-  return c.json({ source, warning, prompts: created })
+  const created = picked.map((item) =>
+    toPrompt(studio.id, item, matched.some((hit) => normalizeQuestion(hit.text) === normalizeQuestion(item.text)) ? 'llm' : 'template'),
+  )
+  if (created.length > 0) await insertPrompts(c.env.DB, created)
+  return c.json({ source, warning, summary: addedPromptSummary(picked, coverage), prompts: created })
 })
 
 app.delete('/api/studios/:id/prompts/:promptId', async (c) => {
