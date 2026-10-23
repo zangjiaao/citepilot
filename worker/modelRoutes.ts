@@ -41,6 +41,7 @@ export function registerModelRoutes(app: Hono<{ Bindings: AppBindings }>) {
       provider: parsed.value.provider,
       baseUrl: parsed.value.baseUrl,
       model: parsed.value.model,
+      apiStyle: parsed.value.apiStyle,
       apiKey: parsed.value.apiKey,
       temperature: parsed.value.temperature,
       maxTokens: parsed.value.maxTokens,
@@ -64,6 +65,7 @@ export function registerModelRoutes(app: Hono<{ Bindings: AppBindings }>) {
       provider: parsed.value.provider,
       baseUrl: parsed.value.baseUrl,
       model: parsed.value.model,
+      apiStyle: parsed.value.apiStyle,
       apiKey,
       temperature: parsed.value.temperature,
       maxTokens: parsed.value.maxTokens,
@@ -96,13 +98,34 @@ export function registerModelRoutes(app: Hono<{ Bindings: AppBindings }>) {
     let config = null
     if (id) {
       const inlineKey = typeof body?.apiKey === 'string' ? body.apiKey : undefined
-      config = await configForTest(c.env.DB, id, inlineKey)
-      if (!config) throw new HttpError(404, '没有找到这个模型配置')
+      const stored = await configForTest(c.env.DB, id, inlineKey)
+      if (!stored) throw new HttpError(404, '没有找到这个模型配置')
+      if (body && typeof body.baseUrl === 'string' && typeof body.model === 'string') {
+        const parsed = parseLlmDraft({ ...body, apiKey: stored.apiKey }, { requireKey: true })
+        if (!parsed.ok) throw new HttpError(400, parsed.error, parsed.field)
+        config = callConfig(
+          parsed.value.baseUrl,
+          parsed.value.model,
+          stored.apiKey,
+          parsed.value.temperature,
+          parsed.value.maxTokens,
+          parsed.value.apiStyle,
+        )
+      } else {
+        config = stored
+      }
     } else {
       const parsed = parseLlmDraft(body, { requireKey: true })
       if (!parsed.ok) throw new HttpError(400, parsed.error, parsed.field)
       if (!parsed.value.apiKey) throw new HttpError(400, '请填写 API 密钥', 'apiKey')
-      config = callConfig(parsed.value.baseUrl, parsed.value.model, parsed.value.apiKey, parsed.value.temperature, parsed.value.maxTokens)
+      config = callConfig(
+        parsed.value.baseUrl,
+        parsed.value.model,
+        parsed.value.apiKey,
+        parsed.value.temperature,
+        parsed.value.maxTokens,
+        parsed.value.apiStyle,
+      )
     }
     const result = await testLlmConnection(config)
     if (!result.ok) throw new HttpError(422, result.error)

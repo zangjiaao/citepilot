@@ -1,4 +1,4 @@
-import { completionsUrl } from './json.ts'
+import { completionsUrl, responsesUrl } from './json.ts'
 import { assertPublicHttpUrl } from './ssrf.ts'
 
 export const LLM_PRESETS = [
@@ -14,6 +14,12 @@ export const LLM_PRESETS = [
 
 export type LlmProviderId = (typeof LLM_PRESETS)[number]['id']
 export type LlmTask = 'generate' | 'analyze'
+export type LlmApiStyle = 'chat' | 'responses'
+
+export const LLM_API_STYLES = [
+  { id: 'chat', label: '对话补全（Chat Completions）' },
+  { id: 'responses', label: 'Responses API' },
+] as const
 
 export interface LlmConfigChoice {
   id: string
@@ -29,6 +35,7 @@ export interface LlmCallConfig {
   apiKey: string
   baseUrl: string
   model: string
+  apiStyle: LlmApiStyle
   completionsUrl: string
   temperature: number | null
   maxTokens: number | null
@@ -42,6 +49,21 @@ export function isLlmProvider(value: string): value is LlmProviderId {
 
 export function providerLabel(id: string): string {
   return LLM_PRESETS.find((item) => item.id === id)?.label ?? id
+}
+
+export function isLlmApiStyle(value: string): value is LlmApiStyle {
+  return value === 'chat' || value === 'responses'
+}
+
+export function apiStyleLabel(style: string): string {
+  return LLM_API_STYLES.find((item) => item.id === style)?.label ?? '对话补全（Chat Completions）'
+}
+
+export function apiStyleHint(style: LlmApiStyle): string {
+  if (style === 'responses') {
+    return '填到 /v1 或 /ai/v1 为止，请求会发到 /responses。Cloudflare 统一计费用 https://api.cloudflare.com/client/v4/accounts/账户ID/ai/v1 ，模型 ID 例如 openai/gpt-5.6-sol。'
+  }
+  return '填到服务商根地址或 /v1、/ai/v1 为止，请求会发到 /chat/completions。DeepSeek 用 https://api.deepseek.com 。Cloudflare 对话补全同样用 …/ai/v1 。'
 }
 
 export function maskApiKey(key: string): string {
@@ -69,6 +91,7 @@ export interface LlmDraftInput {
   provider: string
   baseUrl: string
   model: string
+  apiStyle: LlmApiStyle
   apiKey?: string
   temperature: number | null
   maxTokens: number | null
@@ -104,6 +127,8 @@ export function parseLlmDraft(input: unknown, options: { requireKey: boolean }):
   if (apiKey && !keepsStoredKey(apiKey) && (apiKey.length < 8 || apiKey.length > 500)) {
     return { ok: false, field: 'apiKey', error: 'API 密钥长度看起来不对' }
   }
+  const apiStyle = readApiStyle(record.apiStyle)
+  if (!apiStyle.ok) return apiStyle
   const temperature = optionalNumber(record.temperature, 'temperature', 0, 2)
   if (!temperature.ok) return temperature
   const maxTokens = optionalInt(record.maxTokens, 'maxTokens', 1, 128000)
@@ -115,6 +140,7 @@ export function parseLlmDraft(input: unknown, options: { requireKey: boolean }):
       provider,
       baseUrl: parsedUrl.toString().replace(/\/$/, ''),
       model,
+      apiStyle: apiStyle.value,
       apiKey,
       temperature: temperature.value,
       maxTokens: maxTokens.value,
@@ -123,12 +149,26 @@ export function parseLlmDraft(input: unknown, options: { requireKey: boolean }):
   }
 }
 
-export function callConfig(baseUrl: string, model: string, apiKey: string, temperature: number | null, maxTokens: number | null): LlmCallConfig {
+function readApiStyle(value: unknown): { ok: true; value: LlmApiStyle } | { ok: false; field: string; error: string } {
+  if (value === undefined || value === null || value === '') return { ok: true, value: 'chat' }
+  if (typeof value === 'string' && isLlmApiStyle(value)) return { ok: true, value }
+  return { ok: false, field: 'apiStyle', error: '接口类型只能是对话补全或 Responses API' }
+}
+
+export function callConfig(
+  baseUrl: string,
+  model: string,
+  apiKey: string,
+  temperature: number | null,
+  maxTokens: number | null,
+  apiStyle: LlmApiStyle = 'chat',
+): LlmCallConfig {
   return {
     apiKey,
     baseUrl,
     model,
-    completionsUrl: completionsUrl(baseUrl),
+    apiStyle,
+    completionsUrl: apiStyle === 'responses' ? responsesUrl(baseUrl) : completionsUrl(baseUrl),
     temperature,
     maxTokens,
   }

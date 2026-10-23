@@ -71,7 +71,9 @@ DEEPSEEK_API_KEY=sk-...
 # DEEPSEEK_MODEL=deepseek-chat
 ```
 
-也认 `OPENAI_API_KEY`，但 `DEEPSEEK_API_KEY` 优先。`DEEPSEEK_BASE_URL` 默认 `https://api.deepseek.com`，请求发到 `{BASE_URL}/chat/completions`。`DEEPSEEK_MODEL` 默认 `deepseek-chat`。
+也认 `OPENAI_API_KEY`，但 `DEEPSEEK_API_KEY` 优先。`DEEPSEEK_BASE_URL` 默认 `https://api.deepseek.com`，请求发到 `{BASE_URL}/chat/completions`。`DEEPSEEK_MODEL` 默认 `deepseek-chat`。环境变量这条始终是对话补全。
+
+设置里每套配置可以选接口类型，默认仍是对话补全。选 Responses API 后，同一前缀改发到 `{地址}/responses`（地址若已带 `/chat/completions` 或 `/responses`，会换成当前类型对应的路径）。Cloudflare 统一计费把地址填成 `https://api.cloudflare.com/client/v4/accounts/<账户 ID>/ai/v1`：对话补全走 `/chat/completions`，Sol 这类模型选 Responses API，模型 ID 例如 `openai/gpt-5.6-sol`。
 
 改完后重启 `npm run dev`。概览页会显示当前用的是保存的配置还是环境变量。设置页可以「测试连接」，并分别指定「内容生成」和「分析 / 抽取」。
 
@@ -96,7 +98,7 @@ npx wrangler secret put DEEPSEEK_API_KEY
 npm run db:migrate
 ```
 
-`0008_llm_and_cascade.sql` 重建样本表的级联删除，并加上模型配置表。`0009_brand_profile.sql` 给品牌加上介绍、语气和红线等可选字段。`0010_assets.sql` 建立素材库，并把当时已有的案例详情和参考资料搬进去。`0011_chengchuan_demo.sql` 给澄川填上品牌页样例，并把澄川的素材库换成对照用的八条素材。`0012_prompt_assets.sql` 给澄川补上对得上这些素材的场景题，旧的选型题留给监测。已经在跑的本地库执行一次 `npm run db:migrate` 即可，不必删库。
+`0008_llm_and_cascade.sql` 重建样本表的级联删除，并加上模型配置表。`0009_brand_profile.sql` 给品牌加上介绍、语气和红线等可选字段。`0010_assets.sql` 建立素材库，并把当时已有的案例详情和参考资料搬进去。`0011_chengchuan_demo.sql` 给澄川填上品牌页样例，并把澄川的素材库换成对照用的八条素材。`0012_prompt_assets.sql` 给澄川补上对得上这些素材的场景题，旧的选型题留给监测。`0013_llm_api_style.sql` 给模型配置加上接口类型，旧配置默认仍是对话补全。已经在跑的本地库执行一次 `npm run db:migrate` 即可，不必删库。
 
 ## 循环里的页面
 

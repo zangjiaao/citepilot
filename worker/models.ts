@@ -37,6 +37,7 @@ export function publicConfig(config: StoredLlmConfig) {
     providerLabel: providerLabel(config.provider),
     baseUrl: config.baseUrl,
     model: config.model,
+    apiStyle: config.apiStyle,
     temperature: config.temperature,
     maxTokens: config.maxTokens,
     isDefault: config.isDefault,
@@ -60,7 +61,7 @@ export async function resolveLlm(db: D1Database, env: AppBindings, task: LlmTask
       source: 'saved',
       label: saved.label,
       provider: providerLabel(saved.provider),
-      ...callConfig(saved.baseUrl, saved.model, saved.apiKey, saved.temperature, saved.maxTokens),
+      ...callConfig(saved.baseUrl, saved.model, saved.apiKey, saved.temperature, saved.maxTokens, saved.apiStyle),
     }
   }
   const fallback = llmConfig(env)
@@ -73,6 +74,7 @@ export async function resolveLlm(db: D1Database, env: AppBindings, task: LlmTask
       apiKey: fallback.apiKey,
       baseUrl: fallback.baseUrl,
       model: fallback.model,
+      apiStyle: 'chat',
       completionsUrl: fallback.completionsUrl,
       temperature: null,
       maxTokens: null,
@@ -86,6 +88,7 @@ export async function resolveLlm(db: D1Database, env: AppBindings, task: LlmTask
     apiKey: '',
     baseUrl: '',
     model: '',
+    apiStyle: 'chat',
     completionsUrl: '',
     temperature: null,
     maxTokens: null,
@@ -111,7 +114,7 @@ export async function configForTest(db: D1Database, id: string, apiKey: string |
   const stored = await getLlmConfig(db, id)
   if (!stored) return null
   const key = apiKey && !apiKey.startsWith('已保存') ? apiKey : stored.apiKey
-  return callConfig(stored.baseUrl, stored.model, key, stored.temperature, stored.maxTokens)
+  return callConfig(stored.baseUrl, stored.model, key, stored.temperature, stored.maxTokens, stored.apiStyle)
 }
 
 function taskView(resolved: ResolvedLlm): PublicLlmTask {
