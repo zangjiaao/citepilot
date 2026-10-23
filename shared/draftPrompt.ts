@@ -1,6 +1,7 @@
 import { allowedNumbers, assetBlock, assetTypeLabel, draftFromAssets, type Asset, type BrandMention } from './assets.ts'
 import { draftImageRule, draftImages, withDraftImages } from './draftImages.ts'
 import { coerceUrlHint, isPlaceholderWebsite } from './drafts.ts'
+import { platformFormatRule } from './platformFormats.ts'
 import type { DraftBrief, DraftChannel, Studio } from './types.ts'
 
 export type { BrandMention } from './assets.ts'
@@ -182,14 +183,19 @@ export function assembleDraftPrompt(
 ): { system: string; user: string } {
   const lengthHint =
     options.contentType === 'thread'
-      ? '5 到 8 条短句，每条单独成段，段与段之间空一行'
+      ? '5 到 8 条，每条一个点，单独成段'
       : options.contentType === 'short-post'
-        ? '300 字以内。短帖更碎，一两句一段'
-        : options.length === 'short'
-          ? '400 到 700 字'
-          : options.length === 'long'
+        ? '正文约 300 到 800 字，不超过约 1000 字'
+        : options.contentType === 'wechat'
+          ? options.length === 'long'
             ? '1800 到 2800 字'
-            : '900 到 1400 字'
+            : '900 到 2000 字'
+          : options.length === 'short'
+            ? '400 到 700 字'
+            : options.length === 'long'
+              ? '1800 到 2800 字'
+              : '900 到 1400 字'
+  const formatRule = platformFormatRule(options.contentType, options.length, options.brandMention)
   const mentionRule = implantRule(options.brandMention, extra.promptText, studio.name, studio.website)
   const hintRule = 'urlHint 必须使用给定官网的主机名。官网若是 example.com 这种示例地址，不要写进 urlHint。'
   const citeRule =
@@ -208,6 +214,7 @@ export function assembleDraftPrompt(
     options.allowBragging ? '用户允许提到素材里已经写明的奖项或规模，仍然不能编造。' : '不要写奖项、人数、融资或行业领先。',
     '数字只能来自已授权的指标，或素材正文里已经出现的数字。',
     PARAGRAPH_RULE,
+    formatRule,
     draftImageRule(draftImages(assets)),
     '只输出 JSON：{"title":"","body":"","citeSentences":["",""],"urlHint":""}。',
     citeRule,
@@ -225,6 +232,7 @@ export function assembleDraftPrompt(
     `语气：${options.tone || studio.voice || '像在讲客户那边发生的变化'}`,
     `长度：${lengthHint}`,
     PARAGRAPH_RULE,
+    formatRule,
     assets.length > 0 ? assets.map((item, index) => `素材 ${index + 1}\n${assetBlock(item)}`).join('\n\n') : '素材：没有勾选。不要用品牌介绍硬写。',
     draftImageRule(draftImages(assets)),
     `官网：${studio.website || '未填'}。urlHint 只能用这个官网的主机名，不要写成 example.com。`,

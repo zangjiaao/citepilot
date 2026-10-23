@@ -17,6 +17,7 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import * as stylex from '@stylexjs/stylex'
 import { IMPLANT_LEVELS, IMPLANT_PURPOSE, PUBLISH_PLATFORMS, SOFT_IMPLANT_HINT, platformForAssetType, publishPlatform, type BrandMention, type DraftLength, type PublishPlatformId } from '../../../shared/draftPrompt.ts'
+import { platformFormatHint } from '../../../shared/platformFormats.ts'
 import { draftImages, type DraftImage } from '../../../shared/draftImages.ts'
 import { recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
 import { ASSET_TYPES, assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
@@ -556,7 +557,7 @@ export function DraftsPage() {
           setPlatformId(next.id)
         }}
       />
-      <Text color="secondary">这条按「{platform.format}」来写。</Text>
+      <Text color="secondary">{platformFormatHint(platform.id)}</Text>
       <VStack gap={2}>
         <HStack gap={2} vAlign="center" wrap="wrap">
           <Heading level={3}>主题 / 素材</Heading>
