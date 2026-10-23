@@ -73,7 +73,7 @@ DEEPSEEK_API_KEY=sk-...
 
 也认 `OPENAI_API_KEY`，但 `DEEPSEEK_API_KEY` 优先。`DEEPSEEK_BASE_URL` 默认 `https://api.deepseek.com`，请求发到 `{BASE_URL}/chat/completions`。`DEEPSEEK_MODEL` 默认 `deepseek-chat`。环境变量这条始终是对话补全。
 
-设置里每套配置可以选接口类型，默认仍是对话补全。选 Responses API 后，同一前缀改发到 `{地址}/responses`（地址若已带 `/chat/completions` 或 `/responses`，会换成当前类型对应的路径）。Cloudflare 统一计费把地址填成 `https://api.cloudflare.com/client/v4/accounts/<账户 ID>/ai/v1`：对话补全走 `/chat/completions`，Sol 这类模型选 Responses API，模型 ID 例如 `openai/gpt-5.6-sol`。
+设置里每套配置可以选接口类型，默认仍是对话补全。选 Responses API 后，同一前缀改发到 `{地址}/responses`（地址若已带 `/chat/completions` 或 `/responses`，会换成当前类型对应的路径）。Cloudflare 统一计费把地址填成 `https://api.cloudflare.com/client/v4/accounts/<账户 ID>/ai/v1`：对话补全走 `/chat/completions`，Sol 这类模型选 Responses API，模型 ID 例如 `openai/gpt-5.6-sol`。MiniMax 走对话补全，模型 ID 用 `minimax/m2.7` 或 `minimax/m3`。
 
 改完后重启 `npm run dev`。概览页会显示当前用的是保存的配置还是环境变量。设置页可以「测试连接」，并分别指定「内容生成」和「分析 / 抽取」。
 

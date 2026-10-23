@@ -63,7 +63,7 @@ export function apiStyleHint(style: LlmApiStyle): string {
   if (style === 'responses') {
     return '填到 /v1 或 /ai/v1 为止，请求会发到 /responses。Cloudflare 统一计费用 https://api.cloudflare.com/client/v4/accounts/账户ID/ai/v1 ，模型 ID 例如 openai/gpt-5.6-sol。'
   }
-  return '填到服务商根地址或 /v1、/ai/v1 为止，请求会发到 /chat/completions。DeepSeek 用 https://api.deepseek.com 。Cloudflare 对话补全同样用 …/ai/v1 。'
+  return '填到服务商根地址或 /v1、/ai/v1 为止，请求会发到 /chat/completions。DeepSeek 用 https://api.deepseek.com 。Cloudflare 对话补全同样用 …/ai/v1 ，MiniMax 模型 ID 用 minimax/m2.7 或 minimax/m3。'
 }
 
 export function maskApiKey(key: string): string {
