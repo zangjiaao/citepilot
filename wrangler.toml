@@ -8,6 +8,9 @@ main = "worker/index.ts"
 compatibility_date = "2026-10-19"
 compatibility_flags = ["nodejs_compat"]
 upload_source_maps = true
+# 没有 route 时 workers.dev 默认开启。preview_urls 省略不会改掉已有的版本预览开关。
+workers_dev = false
+preview_urls = false
 
 [observability]
 enabled = true
