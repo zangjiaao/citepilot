@@ -3,6 +3,7 @@ import type { LlmCallConfig } from '../shared/llmProviders.ts'
 import {
   DRAFT_TEMPLATE_WARNING,
   LLM_GENERATE_TIMEOUT_MS,
+  LLM_TEST_MAX_TOKENS,
   LLM_TEST_TIMEOUT_MS,
   completeJson,
   draftModelWarning,
@@ -74,6 +75,8 @@ describe('completeJson', () => {
       model: 'deepseek-chat',
       response_format: { type: 'json_object' },
     })
+    expect(bodies[0]).not.toHaveProperty('max_tokens')
+    expect(bodies[0]).not.toHaveProperty('max_completion_tokens')
     expect(timeout).toHaveBeenCalledWith(LLM_GENERATE_TIMEOUT_MS)
   })
 
@@ -244,6 +247,25 @@ describe('completeJson', () => {
     expect(warning).toContain('Unified billing unavailable')
     expect(warning).toContain(DRAFT_TEMPLATE_WARNING)
   })
+
+  it('keeps generate calls on the configured maxTokens, including MiniMax', async () => {
+    const bodies: unknown[] = []
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)))
+        return jsonResponse(chat('{"ok":true}'))
+      }),
+    )
+
+    await expect(completeJson({ ...cloudflare, model: 'minimax/m3.1-flash', maxTokens: 1000 }, '系统', '用户', 0.4)).resolves.toEqual({
+      ok: true,
+    })
+    expect(bodies[0]).toMatchObject({ max_tokens: 1000, response_format: { type: 'json_object' } })
+    expect(bodies[0]).not.toHaveProperty('max_completion_tokens')
+    expect(bodies[0]).not.toHaveProperty('max_output_tokens')
+  })
 })
 
 describe('testLlmConnection', () => {
@@ -265,8 +287,40 @@ describe('testLlmConnection', () => {
     expect(timeout).toHaveBeenCalledWith(LLM_TEST_TIMEOUT_MS)
     expect(LLM_TEST_TIMEOUT_MS).toBeLessThan(LLM_GENERATE_TIMEOUT_MS)
     expect(bodies[0]).not.toHaveProperty('response_format')
-    expect(bodies[0]).toMatchObject({ messages: [{ role: 'user', content: '只回复一个字：好' }] })
+    expect(bodies[0]).toMatchObject({
+      max_tokens: LLM_TEST_MAX_TOKENS,
+      messages: [{ role: 'user', content: '只回复一个字：好' }],
+    })
+    expect(bodies[0]).not.toHaveProperty('max_completion_tokens')
+    expect(LLM_TEST_MAX_TOKENS).toBeGreaterThan(16)
+    expect(LLM_TEST_MAX_TOKENS).toBeLessThanOrEqual(512)
     expect(urls[0]).toBe('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/chat/completions')
+  })
+
+  it('gives MiniMax chat probes both token fields, and leaves DeepSeek on max_tokens', async () => {
+    const bodies: unknown[] = []
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)))
+        return jsonResponse(chat('好'))
+      }),
+    )
+
+    const minimax = { ...cloudflare, model: 'minimax/m3.1-flash' }
+    await expect(testLlmConnection(minimax)).resolves.toEqual({ ok: true, reply: '好' })
+    expect(bodies[0]).toMatchObject({
+      model: 'minimax/m3.1-flash',
+      max_tokens: LLM_TEST_MAX_TOKENS,
+      max_completion_tokens: LLM_TEST_MAX_TOKENS,
+      messages: [{ role: 'user', content: '只回复一个字：好' }],
+    })
+    expect(bodies[0]).not.toHaveProperty('response_format')
+
+    await expect(testLlmConnection(deepseek)).resolves.toEqual({ ok: true, reply: '好' })
+    expect(bodies[1]).toMatchObject({ model: 'deepseek-chat', max_tokens: LLM_TEST_MAX_TOKENS })
+    expect(bodies[1]).not.toHaveProperty('max_completion_tokens')
   })
 
   it('tests a Responses model without chat completions', async () => {
@@ -285,11 +339,13 @@ describe('testLlmConnection', () => {
     expect(bodies[0]).toMatchObject({
       model: 'openai/gpt-5.6-sol',
       input: [{ role: 'user', content: '只回复一个字：好' }],
-      max_output_tokens: 16,
+      max_output_tokens: LLM_TEST_MAX_TOKENS,
     })
     expect(bodies[0]).not.toHaveProperty('messages')
     expect(bodies[0]).not.toHaveProperty('response_format')
     expect(bodies[0]).not.toHaveProperty('temperature')
+    expect(bodies[0]).not.toHaveProperty('max_tokens')
+    expect(bodies[0]).not.toHaveProperty('max_completion_tokens')
   })
 
   it('reports a timed-out connection test as 模型请求超时', async () => {

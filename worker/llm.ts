@@ -8,6 +8,14 @@ import type { GeneratedPrompt, Studio } from '../shared/types.ts'
 export const LLM_GENERATE_TIMEOUT_MS = 90_000
 export const LLM_TEST_TIMEOUT_MS = 25_000
 
+/**
+ * 连接探测的补全上限。
+ * 推理模型会先把 token 花在 reasoning 上。上限只有 16 时，可见 content 经常是空的，
+ * Cloudflare 的 OpenAI 兼容转换会返回 500「Response conversion failed: Input is undefined or empty」。
+ * 起草仍使用配置里的 maxTokens，不受这个探测上限影响。
+ */
+export const LLM_TEST_MAX_TOKENS = 512
+
 export const DRAFT_TEMPLATE_WARNING = '模型这次没有写成完整稿，下面是按素材整理的底稿，不是终稿。可以再点一次生成。'
 
 export function draftModelWarning(error: unknown): string {
@@ -38,7 +46,7 @@ export async function testLlmConnection(config: LlmCallConfig): Promise<{ ok: tr
     const response = await postJson(
       requestUrl(config),
       config.apiKey,
-      requestBody(config, '', '只回复一个字：好', 0, 'plain', config.apiStyle === 'responses', 16),
+      probeBody(config),
       LLM_TEST_TIMEOUT_MS,
     )
     if (!response.ok) {
@@ -78,6 +86,17 @@ async function postCompletion(
 
 function requestUrl(config: LlmCallConfig): string {
   return config.apiStyle === 'responses' ? responsesUrl(config.baseUrl) : completionsUrl(config.baseUrl)
+}
+
+function probeBody(config: LlmCallConfig): Record<string, unknown> {
+  const body = requestBody(config, '', '只回复一个字：好', 0, 'plain', config.apiStyle === 'responses', LLM_TEST_MAX_TOKENS)
+  // Cloudflare MiniMax 的 /chat/completions 示例用 max_tokens，Workers AI 示例用 max_completion_tokens。
+  // 探测两个都带上，避免只认其中一个字段时预算失效。其它服务商不带 max_completion_tokens：
+  // OpenAI 同时收到两个字段会 400，DeepSeek 只执行 max_tokens。
+  if (config.apiStyle !== 'responses' && /minimax/i.test(config.model)) {
+    body.max_completion_tokens = LLM_TEST_MAX_TOKENS
+  }
+  return body
 }
 
 function requestBody(
