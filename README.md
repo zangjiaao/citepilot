@@ -161,6 +161,8 @@ npm run deploy
 
 远程迁移会写入种子品牌和示例记录。若生产库不要示例监测，可在部署后于界面删除那些记录，或删除整个种子品牌。也可以只在远程执行 `migrations/0001_init.sql`。之后的迁移请用 `npx wrangler d1 migrations apply citepilot --remote`，不要跳号。
 
+生产环境使用自定义域名 `citepilot.oak-studio.org`（在 Dashboard 和 DNS 配置，不写入本仓库）。`wrangler.toml` 里的 `workers_dev = false` 会在每次部署时关闭 `workers.dev`。只在 Dashboard 里禁用不够，下一次 `wrangler deploy` 会把它重新打开。同文件的 `preview_urls = false` 关掉仍挂在 `workers.dev` 上的版本预览地址；不写这项时，Wrangler 不会改掉已经存在的预览开关。
+
 ## 目录
 
 ```text
