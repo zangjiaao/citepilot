@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit --pretty false",
     "db:migrate": "CI=true wrangler d1 migrations apply citepilot --local",
     "cf-typegen": "wrangler types",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "npm run build && wrangler deploy --config dist/client/citepilot/wrangler.json",
     "smoke": "node scripts/smoke.mjs"
   },
   "repository": {

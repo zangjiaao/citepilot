@@ -49,7 +49,7 @@ npm run typecheck
 npm run build            # 类型检查 + 生产构建
 npm run preview          # 用 Workers 运行时预览构建结果
 npx wrangler dev         # 只跑 Worker。页面开发请用 npm run dev
-npm run deploy           # 构建后 wrangler deploy。部署前先换成真实的 D1 id
+npm run deploy           # 构建后按 Vite 生成的 wrangler.json 部署
 ```
 
 `npm run dev` 已包含 Worker。单独执行 `npx wrangler dev` 时，API 可用；静态页面以 Vite 构建结果为准。
@@ -147,15 +147,14 @@ npx wrangler r2 bucket create citepilot-media
 
 ## 部署
 
-`wrangler.toml` 里的 `database_id` 是本地占位。部署前：
+`wrangler.toml` 的 `[assets]` 必须带 `directory`，否则 `wrangler deploy` 会报缺少 `directory`。这里写成 `./dist/client`，与 `vite.config.ts` 的 `build.outDir` 一致，并保留 `not_found_handling`、`binding = "ASSETS"` 和 `run_worker_first = ["/api/*"]`。
+
+Cloudflare Vite 插件在 `vite build` 之后另写 `dist/client/citepilot/wrangler.json`，把静态资源目录指到真正的客户端产物（`dist/client/client`）。这份生成配置才是部署入口。因为 Vite 根目录是 `web/`，插件把跳转文件写在 `web/.wrangler/deploy/config.json`，仓库根目录的 `wrangler deploy` 不会自动用到它。所以 `npm run deploy` 先构建，再执行 `wrangler deploy --config dist/client/citepilot/wrangler.json`。
+
+`database_id` 已是 citepilot 库 `7a561eed-e972-444e-8341-e65764128b31`。第一次上线前把迁移应用到远程库，并建好素材图片用的 R2 桶：
 
 ```bash
-npx wrangler d1 create citepilot
-```
-
-把返回的 id 写回 `wrangler.toml` 的 `database_id`，然后：
-
-```bash
+npx wrangler r2 bucket create citepilot-media
 npx wrangler d1 migrations apply citepilot --remote
 npm run deploy
 ```
