@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Heading } from '@astryxdesign/core/Heading'
 import { HStack } from '@astryxdesign/core/HStack'
@@ -7,6 +7,8 @@ import { StackItem } from '@astryxdesign/core/Stack'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
 import { styles } from './styles'
+import { useStudio } from './studio'
+import { TIP_EVENT, clearDismissedTips, dismissTip, readDismissedTips, tipStorageKey } from './tips'
 
 export function PageFrame({
   title,
@@ -47,9 +49,57 @@ export function PageFrame({
 
 export function ErrorBanner({ message }: { message: string }) {
   if (!message) return null
-  return <Banner status="error" title="没有完成" description={message} container="section" />
+  return <Banner status="error" title="没有完成" description={message} container="card" />
 }
 
-export function InfoBanner({ title, description }: { title: string; description?: string }) {
-  return <Banner status="info" title={title} description={description} container="card" />
+export function InfoBanner({ title, onDismiss }: { title: string; onDismiss?: () => void }) {
+  return (
+    <Banner key={title} status="info" title={title} container="card" isDismissable dismissLabel="关闭" onDismiss={onDismiss} />
+  )
+}
+
+export function TipBanner({
+  id,
+  page,
+  title,
+  status = 'info',
+}: {
+  id: string
+  page: string
+  title: string
+  status?: 'info' | 'warning'
+}) {
+  const { studioId, loading } = useStudio()
+  const key = tipStorageKey(studioId, page, id)
+  const [gone, setGone] = useState(false)
+  useEffect(() => {
+    if (loading) return
+    const sync = () => setGone(readDismissedTips(localStorage).includes(key))
+    sync()
+    window.addEventListener(TIP_EVENT, sync)
+    window.addEventListener('storage', sync)
+    return () => {
+      window.removeEventListener(TIP_EVENT, sync)
+      window.removeEventListener('storage', sync)
+    }
+  }, [key, loading])
+  if (loading || gone) return null
+  return (
+    <Banner
+      status={status}
+      title={title}
+      container="card"
+      isDismissable
+      dismissLabel="关闭"
+      onDismiss={() => {
+        dismissTip(localStorage, key)
+        window.dispatchEvent(new Event(TIP_EVENT))
+      }}
+    />
+  )
+}
+
+export function restoreDismissedTips() {
+  clearDismissedTips(localStorage)
+  window.dispatchEvent(new Event(TIP_EVENT))
 }

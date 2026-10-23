@@ -52,11 +52,13 @@ export function PromptsPage() {
     if (!studioId) return
     setError('')
     setNotice('')
-    const result = await api<{ source: string; warning: string; prompts: Prompt[] }>(`/api/studios/${studioId}/prompts/generate`, {
+    const result = await api<{ source: string; warning: string; summary?: string; prompts: Prompt[] }>(`/api/studios/${studioId}/prompts/generate`, {
       method: 'POST',
       body: JSON.stringify({}),
     })
-    setNotice(result.warning || (result.source === 'llm' ? 'DeepSeek 写了新题。' : '已按档案套用模板题。'))
+    const summary = result.summary?.trim() || ''
+    const warning = result.warning?.trim() || ''
+    setNotice([summary, warning].filter(Boolean).join('') || (result.source === 'covered' ? '题库已覆盖当前品牌和素材。' : '已按盲区补题。'))
     await load(studioId)
   }
 
@@ -99,13 +101,14 @@ export function PromptsPage() {
   return (
     <PageFrame
       title="题库"
-      description="品牌题看别人是否认识你，品类题看不点名时会不会提到你，对比题和场景题看竞品与用法。"
-      actions={<Button label="生成题目" variant="primary" clickAction={generate} isDisabled={!studioId} />}
+      description="结合品牌资料和素材库出题。先评估覆盖，只补还没有题的盲区。场景题要对得上已有素材；品牌题和对比题留给监测。"
+      actions={<Button label="评估并补盲区" variant="primary" clickAction={generate} isDisabled={!studioId} />}
     >
       <VStack gap={4}>
         <ErrorBanner message={error} />
-        {notice ? <InfoBanner title={notice} /> : null}
-        {llm && !llm.enabled ? <Text type="supporting">未配置密钥，生成会使用模板，并跳过已经存在的问法。</Text> : null}
+        {notice ? <InfoBanner title={notice} onDismiss={() => setNotice('')} /> : null}
+        {llm && !llm.enabled ? <Text type="supporting">未配置密钥时，仍先评估覆盖，只补还没有题的盲区。</Text> : null}
+        <Text type="supporting">先看题库是否盖住品牌和素材，只补还没有题的部分。</Text>
         <HStack gap={2} wrap="wrap" vAlign="end">
           <Selector
             label="筛选簇"

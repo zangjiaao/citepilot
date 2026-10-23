@@ -3,6 +3,24 @@ export function percent(value: number | null | undefined): string {
   return `${Math.round(value * 100)}%`
 }
 
+export function formatRank(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—'
+  const rounded = Math.round(value * 10) / 10
+  return Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)
+}
+
+export function sampleFraction(hits: number, total: number): string {
+  if (total <= 0) return '未记录'
+  return `${hits}/${total}`
+}
+
+export function splitLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 export function splitList(value: string): string[] {
   return value
     .split(/\n|，|,/)

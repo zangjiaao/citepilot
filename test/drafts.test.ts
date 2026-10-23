@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { acceptDraft, copyDraftTitle, DRAFT_CHANNELS, formatDraftForCopy, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
+import { acceptDraft, coerceUrlHint, copyDraftTitle, DRAFT_CHANNELS, formatDraftForCopy, parseDraftEdit, PLACEHOLDER_URL_HINT, templateDraft } from '../shared/drafts.ts'
+import { blankBrandProfile } from '../shared/brandProfile.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -8,12 +9,13 @@ const studio: Studio = {
   website: 'https://example.com',
   positioning: '面向中大型企业的前场部署工程师工作室，把通用大模型做成可上线的业务智能体。',
   services: ['智能体应用从 0 到 1 共创', '企业知识库与 RAG 落地'],
-  competitors: ['澜舟智能体实验室'],
+  competitors: [{ id: 'comp-lanzhou', name: '澜舟智能体实验室', aliases: [], domain: '' }],
   keywords: ['企业智能体', 'RAG 知识库'],
   capabilities: ['企业知识库与 RAG：权限、引用溯源和评测集一起交付', '前场部署工程师驻场，和业务方一起写验收题'],
   cases: ['制造企业设备故障问答：把维修手册整理成可引用的知识库'],
   targetCustomers: ['第一次把大模型做成业务系统的中大型企业'],
   solutions: ['企业知识库 RAG：文档、权限、引用和回归题'],
+  ...blankBrandProfile(),
   createdAt: '',
   updatedAt: '',
 }
@@ -28,8 +30,9 @@ describe('templateDraft', () => {
     expect(draft.body).toContain('制造企业设备故障问答')
     expect(draft.citeSentences.length).toBeGreaterThanOrEqual(3)
     expect(draft.citeSentences.every((sentence) => sentence.includes('澄川智能体工场'))).toBe(true)
-    expect(draft.urlHint).toContain('https://example.com/product')
-    expect(formatDraftForCopy(draft)).toContain('建议被引用的句子')
+    expect(draft.urlHint).toBe(PLACEHOLDER_URL_HINT)
+    expect(draft.urlHint).not.toContain('example.com')
+    expect(formatDraftForCopy(draft)).toBe(`标题：${draft.title}\n\n${draft.body}`)
   })
 
   it('answers a linked prompt and names a diagnosis gap', () => {
@@ -44,7 +47,17 @@ describe('templateDraft', () => {
     expect(draft.body).toContain('企业知识库 RAG 项目一般包含哪些交付物？')
     expect(draft.body).toContain('可引用的问答')
     expect(draft.body).toContain('页面没有 FAQ')
-    expect(draft.urlHint).toContain('/faq')
+    expect(draft.urlHint).toBe(PLACEHOLDER_URL_HINT)
+    expect(draft.urlHint).not.toContain('example.com')
+  })
+
+  it('replaces a sneaked example.com hint when the studio site is somewhere else', () => {
+    expect(coerceUrlHint('https://example.com/faq', 'https://www.oak-studio.org/', '/faq')).toBe('https://www.oak-studio.org/faq')
+    expect(coerceUrlHint('https://www.oak-studio.org/custom — 说明', 'https://www.oak-studio.org/', '/faq')).toBe(
+      'https://www.oak-studio.org/custom — 说明',
+    )
+    expect(coerceUrlHint('https://example.com/faq', 'https://example.com', '/faq')).toBe(PLACEHOLDER_URL_HINT)
+    expect(coerceUrlHint('https://example.com/faq', 'https://example.com', '/faq')).not.toContain('example.com')
   })
 
   it('gives every channel its own title and a body that names the studio', () => {
@@ -97,20 +110,21 @@ describe('parseDraftEdit', () => {
 })
 
 describe('acceptDraft', () => {
-  it('drops model output that is too thin or omits the brand', () => {
+  it('drops model output that is too thin and keeps a long guide draft before the closer is attached', () => {
     expect(acceptDraft({ title: '短', body: '太短', citeSentences: [], urlHint: '' }, studio.name)).toBeNull()
     const longBody = `${'没有品牌名的说明。'.repeat(12)}`
-    expect(
-      acceptDraft(
-        {
-          title: '一份看起来完整的草稿标题',
-          body: longBody,
-          citeSentences: ['这句话没有品牌。', '另一句也没有。'],
-          urlHint: 'https://example.com/product',
-        },
-        studio.name,
-      ),
-    ).toBeNull()
+    const accepted = acceptDraft(
+      {
+        title: '一份看起来完整的草稿标题',
+        body: longBody,
+        citeSentences: ['这句话没有品牌名但足够长。', '另一句也把事实写清楚了。'],
+        urlHint: 'https://example.com/product',
+      },
+      studio.name,
+      'guide',
+    )
+    expect(accepted?.body).toBe(longBody)
+    expect(accepted?.citeSentences).toHaveLength(2)
   })
 
   it('keeps a model draft that stays inside the studio facts', () => {

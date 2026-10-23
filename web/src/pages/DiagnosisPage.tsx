@@ -87,7 +87,7 @@ export function DiagnosisPage() {
     >
       <VStack gap={4}>
         <ErrorBanner message={error} />
-        <TextInput label="诊断地址" value={url} onChange={setUrl} width="100%" description="默认使用档案里的官网，也可以换成站内某一篇公开文章。" />
+        <TextInput label="诊断地址" value={url} onChange={setUrl} width="100%" description="默认使用品牌资料里的官网，也可以换成站内某一篇公开文章。" />
         {current ? (
           <VStack gap={3}>
             <Heading level={2}>{current.title || '未读到标题'}</Heading>
