@@ -109,7 +109,8 @@ async function main() {
   if (!preview.title || !preview.body || preview.body.includes(studio.name) || (preview.citeSentences?.length ?? 0) < 2) {
     throw new Error('draft generate should omit the brand by default and still return cite sentences')
   }
-  if (!String(preview.urlHint).includes('example.com')) throw new Error('draft url hint missing site')
+  if (String(preview.urlHint).includes('example.com')) throw new Error('draft url hint used the placeholder site')
+  if (!String(preview.urlHint).includes('落地页待定')) throw new Error('draft url hint missing real-site note')
   if (!health.llm.enabled && preview.source !== 'template') throw new Error(`expected template draft, got ${preview.source}`)
   const stored = await json(`/api/studios/${studio.id}/drafts`, {
     method: 'POST',

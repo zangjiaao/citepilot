@@ -103,11 +103,13 @@ describe('assembleDraftPrompt', () => {
     expect(prompt.system).toContain('知识库怎么验收？')
     expect(prompt.system).toContain('不要写「我们是行业领先」')
     expect(prompt.system).toContain('立即咨询')
-    expect(prompt.system).toContain(softCloser(studio.name, studio.website))
+    expect(prompt.system).toContain('被 AI 引用')
+    expect(prompt.system).toContain('可以直接回答')
+    expect(prompt.system).not.toContain(softCloser(studio.name, studio.website))
     expect(prompt.system).not.toContain('也可以完全不出现')
-    expect(prompt.system).toContain('不要写成 example.com')
     expect(prompt.user).toContain('不要以题目开头')
     expect(prompt.user).toContain(studio.website)
+    expect(prompt.user).toContain('不要写成 example.com')
   })
 
   it('keeps an intentional recommendation for the clear call to action', () => {
@@ -142,16 +144,18 @@ describe('self check', () => {
 })
 
 describe('implant intensity', () => {
-  it('writes a soft implant as a story, weaves a fact, and ends with one closer', () => {
+  it('answers a linked question inside the story and only uses a closer when no question is available', () => {
     const closer = softCloser(studio.name, studio.website)
     const draft = materialDraft(studio, [metricAsset, ideaAsset], '/guides/how-we-deliver', 'light', '知识库怎么验收？')
     expect(draft.body.startsWith('客户的')).toBe(true)
     expect(draft.body).not.toContain('知识库怎么验收')
     expect(draft.body).not.toContain('问：')
-    expect(draft.body.split(studio.name).length - 1).toBe(1)
-    expect(draft.body.trim().endsWith(closer)).toBe(true)
+    expect(draft.body).not.toContain(studio.name)
+    expect(draft.body).not.toContain(closer)
+    expect(draft.body).toContain('可以核对的变化是')
     expect(draft.body).toContain('45')
-    expect(draft.body).toContain('同一件事里还有一处可以核对')
+    expect(draft.citeSentences.some((item) => item.includes('可以核对的变化是'))).toBe(true)
+    expect(draft.citeSentences.every((item) => !item.includes(studio.name))).toBe(true)
     expect(draft.urlHint).toBe('https://www.oak-studio.org/guides/how-we-deliver')
     const quiet = materialDraft(studio, [metricAsset], '/faq', 'light')
     expect(quiet.body).toContain('当时卡住的是')

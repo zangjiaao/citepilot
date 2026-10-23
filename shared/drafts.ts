@@ -35,24 +35,32 @@ export interface DraftContext {
   gapDetail?: string
 }
 
+export const PLACEHOLDER_URL_HINT = '落地页待定：请到品牌页把官网改成真实站点'
+
+export function isPlaceholderWebsite(website: string): boolean {
+  return isExampleHost(siteHost(website))
+}
+
 export function landingUrl(website: string, channelPath: string): string {
   const path = channelPath.startsWith('/') ? channelPath : `/${channelPath}`
+  if (!website.trim() || isPlaceholderWebsite(website)) return ''
   return `${siteOrigin(website)}${path}`
 }
 
 export function coerceUrlHint(urlHint: string, website: string, channelPath: string): string {
-  const fallback = landingUrl(website, channelPath)
+  const landing = landingUrl(website, channelPath)
+  const fallback = landing || PLACEHOLDER_URL_HINT
+  if (/example\.com/i.test(urlHint) || isPlaceholderWebsite(urlHint) || isPlaceholderWebsite(website)) return fallback
   const studioHost = siteHost(website)
-  if (!studioHost) return fallback
   const hintHost = siteHost(urlHint)
-  if (!hintHost || hintHost.toLowerCase() !== studioHost.toLowerCase()) return fallback
-  if (isExampleHost(hintHost) && !isExampleHost(studioHost)) return fallback
+  if (!studioHost || !hintHost || hintHost.toLowerCase() !== studioHost.toLowerCase()) return fallback
   return urlHint.trim()
 }
 
 export function templateDraft(context: DraftContext): DraftBrief {
   const channel = DRAFT_CHANNELS.find((item) => item.id === context.channel) ?? DRAFT_CHANNELS[0]
-  const urlHint = `${landingUrl(context.studio.website, channel.path)} — ${channel.hint}`
+  const landing = landingUrl(context.studio.website, channel.path)
+  const urlHint = landing ? `${landing} — ${channel.hint}` : PLACEHOLDER_URL_HINT
   return {
     title: cap(titleFor(context), 80),
     body: bodyFor(context).trim(),

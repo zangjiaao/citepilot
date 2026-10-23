@@ -10,6 +10,7 @@ import { isCluster, templatePrompts } from '../shared/prompts.ts'
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
 import { applyBrandMention, assembleDraftPrompt, channelForContentType, isContentType, materialDraft, parseAssetIds, parseDraftOptions, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
+import { relatedDraftPrompts } from '../shared/recommendDraft.ts'
 import { readAssetDraft } from '../shared/assets.ts'
 import { acceptPolishedHtml, POLISH_SYSTEM, polishNotesOffline } from '../shared/polishAsset.ts'
 import { assertPublicHttpUrl } from '../shared/ssrf.ts'
@@ -583,12 +584,32 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
   const selected = assets.filter((item): item is NonNullable<typeof item> => Boolean(item))
   const hidden = selected.find((item) => item.publicity === 'private')
   if (hidden) throw new HttpError(400, `「${hidden.title}」标成不可公开，不会用来起草`)
+  let linkedPromptId = promptId
+  if (options.brandMention === 'none') {
+    promptText = ''
+    linkedPromptId = ''
+  } else if (options.brandMention === 'light' && !promptText && record.linkPrompt !== false) {
+    const bank = await listPrompts(c.env.DB, studio.id)
+    const observations = await listObservations(c.env.DB, studio.id)
+    const ranked = relatedDraftPrompts(
+      options.contentType,
+      studio,
+      selected,
+      bank,
+      observations.map((item) => ({ promptId: item.promptId, mentioned: item.brandMentioned })),
+    )
+    const chosen = bank.find((item) => item.id === ranked[0])
+    if (chosen) {
+      linkedPromptId = chosen.id
+      promptText = chosen.text
+    }
+  }
   const channel = typeof record.contentType === 'string' && isContentType(record.contentType) ? channelForContentType(options.contentType) : channelRaw
   const channelMeta = DRAFT_CHANNELS.find((item) => item.id === channel) ?? DRAFT_CHANNELS[0]
   const context = { studio, channel, promptText, gapLabel, gapDetail }
   let brief =
     selected.length > 0
-      ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention, options.brandMention === 'light' ? promptText : '')
+      ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention, options.brandMention === 'none' ? '' : promptText)
       : templateDraft(context)
   let source: DraftPreview['source'] = 'template'
   const writer = await resolveLlm(c.env.DB, c.env, 'generate')
@@ -616,7 +637,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     try {
       const raw = await completeJson(
         writer,
-        '你在做硬广和水文自检。硬广、立即咨询、行业领先、赋能数字化、一眼广告腔，以及自夸和未授权数字，都改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。软植入时保留结尾那一句软收束，品牌名只在这一句里出现一次，不要在正文中段再写品牌。只输出 JSON：{"body":"..."}',
+        '你在做硬广和水文自检。硬广、立即咨询、行业领先、赋能数字化、一眼广告腔，以及自夸和未授权数字，都改成素材里客户的问题、前后数据或交互。没有授权的数字写成【待补充：客户授权公开的前后数据】。不要补奖项或团队规模。软植入若已经在故事里回答了题目，不要再追加品牌收束；没有题目时才在结尾留一句品牌或官网。不要写成水文。只输出 JSON：{"body":"..."}',
         `要改的句子：${polished.flags.join('\n')}\n原文：${brief.body}`,
         0.2,
       )
@@ -630,7 +651,13 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     }
     polished = rewriteGenericSentences(brief.body, selected, options.allowBragging)
   }
-  brief = applyBrandMention({ ...brief, body: polished.body }, studio.name, studio.website, options.brandMention)
+  brief = applyBrandMention(
+    { ...brief, body: polished.body },
+    studio.name,
+    studio.website,
+    options.brandMention,
+    options.brandMention === 'light' && Boolean(promptText.trim()),
+  )
   brief = { ...brief, urlHint: coerceUrlHint(brief.urlHint, studio.website, channelMeta?.path ?? '/') }
   const gaps = profileGaps(studio, options, selected)
 
@@ -638,7 +665,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     ...brief,
     channel,
     source,
-    promptId: promptId || null,
+    promptId: linkedPromptId || null,
     promptText,
     diagnosisId: diagnosisId || null,
     gapId: gapId || null,

@@ -1,5 +1,5 @@
 import { allowedNumbers, assetBlock, assetTypeLabel, draftFromAssets, type Asset, type BrandMention } from './assets.ts'
-import { landingUrl } from './drafts.ts'
+import { coerceUrlHint, isPlaceholderWebsite } from './drafts.ts'
 import type { DraftBrief, DraftChannel, Studio } from './types.ts'
 
 export type { BrandMention } from './assets.ts'
@@ -47,12 +47,36 @@ const HARD_SELL =
   /硬广|立即咨询|马上咨询|欢迎咨询|点击咨询|行业领先|赋能数字化|一眼广告|广告腔|立刻下单|限时优惠|扫码咨询/
 
 export const IMPLANT_LEVELS = [
-  { id: 'none', label: '不植入', description: '正文、标题和引用句都不出现品牌名，也不硬加问答。' },
-  { id: 'light', label: '软植入', description: '正文仍是故事；结尾会轻轻带一次品牌或官网，不会写成硬广。' },
-  { id: 'guide', label: '明确种草', description: '比软植入更直接。结尾写出品牌名、官网和一句下一步。' },
+  { id: 'none', label: '不植入', description: '不把题目写进正文，也不强行带品牌。' },
+  { id: 'light', label: '软植入', description: '把一道相关题目的答案写进故事，方便发布后被 AI 引用。' },
+  { id: 'guide', label: '明确种草', description: '题目可写可不写。结尾会更明确地写出品牌、官网和下一步。' },
 ] as const
 
-export const SOFT_IMPLANT_HINT = '会把这道题的答案自然写进故事里'
+export const IMPLANT_PURPOSE = '为了让相关题目更容易被 AI 引用；正文仍以素材故事为主'
+
+export const SOFT_IMPLANT_HINT = '会把这道题的答案写进故事，引用句要能直接回答它。'
+
+export const PUBLISH_PLATFORMS = [
+  { id: 'xiaohongshu', label: '小红书 / 即刻短帖', contentType: 'short-post', channel: 'xiaohongshu', format: '短帖' },
+  { id: 'wechat', label: '公众号', contentType: 'wechat', channel: 'wechat', format: '长文' },
+  { id: 'zhihu', label: '知乎', contentType: 'zhihu', channel: 'linkedin', format: '回答' },
+  { id: 'thread', label: 'X / thread', contentType: 'thread', channel: 'social-short', format: '一串短句' },
+  { id: 'site', label: '官网长文', contentType: 'case-breakdown', channel: 'site-article', format: '案例拆解' },
+  { id: 'faq', label: 'FAQ', contentType: 'faq', channel: 'faq', format: '问答' },
+] as const
+
+export type PublishPlatformId = (typeof PUBLISH_PLATFORMS)[number]['id']
+
+export function publishPlatform(id: string) {
+  return PUBLISH_PLATFORMS.find((item) => item.id === id) ?? PUBLISH_PLATFORMS[0]
+}
+
+export function platformForAssetType(type: string): PublishPlatformId {
+  if (type === 'reference') return 'faq'
+  if (type === 'lesson' || type === 'testimonial') return 'wechat'
+  if (type === 'case' || type === 'outcome') return 'site'
+  return 'xiaohongshu'
+}
 
 export function isContentType(value: string): value is ContentType {
   return CONTENT_IDS.has(value)
@@ -163,15 +187,15 @@ export function assembleDraftPrompt(
             ? '1800 到 2800 字'
             : '900 到 1400 字'
   const mentionRule = implantRule(options.brandMention, extra.promptText, studio.name, studio.website)
-  const hintRule = placeholderSite(studio.website)
-    ? 'urlHint 的主机名必须是给定官网。'
-    : 'urlHint 的主机名必须是给定官网，不要写成 example.com 或其他域名。'
+  const hintRule = 'urlHint 必须使用给定官网的主机名。官网若是 example.com 这种示例地址，不要写进 urlHint。'
   const citeRule =
     options.brandMention === 'none'
       ? `citeSentences 是 2 到 4 句从故事里抽出的事实，不要出现品牌名，也不要写成问答。${hintRule}`
-      : options.brandMention === 'light'
-        ? `citeSentences 是 2 到 4 句故事里已经出现的事实，可以不带品牌名。不要把题目原句当成引用句。${hintRule}`
-        : `citeSentences 是 2 到 4 句可引用的话。品牌名可以出现，但不要每句都是广告。${hintRule}`
+      : options.brandMention === 'light' && extra.promptText?.trim()
+        ? `citeSentences 是 2 到 4 句可以直接回答「${extra.promptText.trim()}」的话，只使用素材里的事实，不要写成广告或水文。${hintRule}`
+        : options.brandMention === 'light'
+          ? `citeSentences 是 2 到 4 句故事里的事实，可以不带品牌名。${hintRule}`
+          : `citeSentences 是 2 到 4 句可引用的话。品牌名可以出现，但不要每句都是广告。${hintRule}`
   const system = [
     '你在把几条素材合成一篇可以分享的内容。先选一个钩子，再按渠道安排结构，不要逐条复述素材库。故事优先，不硬广，不凑字，不写成水文。',
     SHOW_DONT_TELL_RULE,
@@ -186,7 +210,7 @@ export function assembleDraftPrompt(
     options.brandMention === 'none'
       ? '题目：这篇不植入，不要把关联题目写进标题或正文，也不要另起问答。'
       : options.brandMention === 'light'
-        ? `题目：${extra.promptText || '无'}。若有题目，只在故事中段用一段短叙述回答，不要以题目开头，不要标注 GEO。`
+        ? `题目：${extra.promptText || '无'}。若有题目，在故事中段回答它，引用句必须能直接当作回答。不要以题目开头，不要标注 GEO。`
         : `题目：${extra.promptText || '无'}`
   const user = [
     `内容类型：${contentTypeLabel(options.contentType)}`,
@@ -195,7 +219,7 @@ export function assembleDraftPrompt(
     `语气：${options.tone || studio.voice || '像在讲客户那边发生的变化'}`,
     `长度：${lengthHint}`,
     assets.length > 0 ? assets.map((item, index) => `素材 ${index + 1}\n${assetBlock(item)}`).join('\n\n') : '素材：没有勾选。不要用品牌介绍硬写。',
-    `官网：${studio.website || '未填'}。urlHint 只能用这个官网的主机名。`,
+    `官网：${studio.website || '未填'}。urlHint 只能用这个官网的主机名，不要写成 example.com。`,
     `品牌资料只作背景。定位：${studio.positioning || '未填'}`,
     `禁用词：${studio.bannedWords || '无'}`,
     `不能说的内容：${studio.compliance || '不要承诺素材里没有的效果'}`,
@@ -239,16 +263,22 @@ export function rewriteGenericSentences(body: string, assets: Asset[], allowBrag
 export function softCloser(brand: string, website: string): string {
   const name = brand.trim()
   const site = website.trim()
-  if (name && site) return `具体做法可以看 ${name}：${site}`
+  if (name && site && !isPlaceholderWebsite(site)) return `具体做法可以看 ${name}：${site}`
   if (name) return name
   return ''
 }
 
-export function applyBrandMention(brief: DraftBrief, brand: string, website: string, mention: BrandMention): DraftBrief {
+export function applyBrandMention(
+  brief: DraftBrief,
+  brand: string,
+  website: string,
+  mention: BrandMention,
+  linkedQuestion = false,
+): DraftBrief {
   if (mention === 'light') {
     const closer = softCloser(brand, website)
     const cleaned = stripLightPromo(brief.body, brand, website)
-    const body = closer && !cleaned.includes(closer) ? `${cleaned}\n\n${closer}`.trim() : cleaned
+    const body = linkedQuestion || !closer || cleaned.includes(closer) ? cleaned : `${cleaned}\n\n${closer}`.trim()
     const citeSentences = brief.citeSentences
       .map((item) => stripBrand(item, brand))
       .filter((item) => item.length >= 12 && item !== closer && !item.startsWith('具体做法可以看'))
@@ -287,13 +317,22 @@ export function materialDraft(
   promptText = '',
 ): DraftBrief {
   const base = draftFromAssets(studio, assets, channelPath, mention)
-  const aside = mention === 'light' ? softAside(assets, base.body) : ''
-  const story = !aside ? base.body : promptText.trim() ? weaveMid(base.body, aside) : `${base.body.trim()}\n\n${aside}`
+  const linked = promptText.trim()
+  const answers = linked && (mention === 'light' || mention === 'guide') ? answerCites(assets) : []
+  let body = base.body
+  let citeSentences = base.citeSentences
+  if (answers[0]) body = weaveMid(body, answers[0])
+  if (mention === 'light' && answers.length >= 2) citeSentences = answers
+  else if (mention === 'light' && !linked) {
+    const aside = softAside(assets, body)
+    if (aside) body = `${body.trim()}\n\n${aside}`
+  }
   return applyBrandMention(
-    { ...base, body: story, urlHint: landingUrl(studio.website, channelPath) },
+    { ...base, body, citeSentences, urlHint: coerceUrlHint(base.urlHint, studio.website, channelPath) },
     studio.name,
     studio.website,
     mention,
+    mention === 'light' && Boolean(linked),
   )
 }
 
@@ -303,20 +342,28 @@ function implantRule(mention: BrandMention, promptText: string | undefined, bran
   }
   if (mention === 'light') {
     const closer = softCloser(brand, website)
-    const question = promptText?.trim()
-      ? `关联题目只作故事中段的一个角度，不要当标题或开头：${promptText.trim()}。用一段短的自然叙述把答案写进故事中段，不要标注 GEO，不要堆 FAQ。`
-      : '没有关联题目时，不要编一段问答。结尾仍要有那一句软收束，正文里保留 1 到 2 句来自素材、可以单独引用的事实。'
-    return `植入强度：软植入。文章仍是从素材写起的故事，不能改成广告。先写客户的问题、前后数据或一处细节。品牌名不要出现在正文中段，不要堆链接。结尾必须有且只有一句软收束：${closer}。不要写立即咨询，不要写「我们是行业领先」。${question}`
+    if (promptText?.trim()) {
+      return `植入强度：软植入。目的是让这道题发布后更容易被 AI 引用，不是喊品牌名。正文仍是素材里的故事，不能改成广告或水文。先写客户的问题、前后数据或一处细节。在故事中段用一段短叙述回答这道题，展示已经发生的变化，不要当标题或开头，不要标注 GEO，不要堆 FAQ：${promptText.trim()}。不要写立即咨询，不要写「我们是行业领先」，不要在中段堆品牌，也不要为了植入再追加品牌收束。`
+    }
+    return `植入强度：软植入。题库里没有可关联的题目。不要编问答，不要写成水文。正文仍是素材故事。结尾必须有且只有一句软收束：${closer}。不要写立即咨询，不要写「我们是行业领先」。`
   }
-  return '植入强度：明确种草。读者有意了解品牌时再用。正文仍从客户问题或素材细节写起，结尾写出品牌名、官网和一句下一步。这比软植入更直接。不要用行业领先、立即咨询、赋能数字化或一眼广告腔。'
+  const optional = promptText?.trim()
+    ? `若带了题目，只在故事中段回答，不要当标题：${promptText.trim()}。`
+    : '题目可选。没有题目时不要编问答。'
+  return `植入强度：明确种草。读者有意了解品牌时再用。正文仍从客户问题或素材细节写起，结尾写出品牌名、官网和一句下一步。这比软植入更直接。${optional}不要用行业领先、立即咨询、赋能数字化或一眼广告腔。`
 }
 
-function placeholderSite(website: string): boolean {
-  try {
-    return /^(www\.)?example\.com$/i.test(new URL(website).host)
-  } catch {
-    return false
-  }
+function answerCites(assets: Asset[]): string[] {
+  const lines: string[] = []
+  const metric = assets.flatMap((item) => item.details.metrics.filter((entry) => entry.customerAuthorized && (entry.before || entry.after)))[0]
+  if (metric) lines.push(`可以核对的变化是：${metric.name}从 ${metric.before}${metric.unit} 到 ${metric.after}${metric.unit}。`)
+  const how = assets.map((item) => item.details.howItWorks.trim() || item.details.approach.trim()).find(Boolean)
+  if (how) lines.push(`做法上，${how.endsWith('。') ? how : `${how}。`}`)
+  const problem = assets.map((item) => item.details.problem.trim()).find(Boolean)
+  if (problem) lines.push(`当时要解决的是：${problem.endsWith('。') ? problem : `${problem}。`}`)
+  const second = assets[1]?.title.trim()
+  if (second) lines.push(`同一件事里还能核对：${second}。`)
+  return lines.filter((item) => item.length >= 12).slice(0, 4)
 }
 
 function weaveMid(body: string, aside: string): string {

@@ -16,7 +16,7 @@ import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import * as stylex from '@stylexjs/stylex'
-import { CONTENT_TYPES, IMPLANT_LEVELS, SOFT_IMPLANT_HINT, channelForContentType, contentTypeForAsset, type BrandMention, type ContentType, type DraftLength } from '../../../shared/draftPrompt.ts'
+import { IMPLANT_LEVELS, IMPLANT_PURPOSE, PUBLISH_PLATFORMS, SOFT_IMPLANT_HINT, platformForAssetType, publishPlatform, type BrandMention, type DraftLength, type PublishPlatformId } from '../../../shared/draftPrompt.ts'
 import { recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
 import { ASSET_TYPES, assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
 import { plainTextFromRich } from '../../../shared/richText.ts'
@@ -51,6 +51,11 @@ const styles = stylex.create({
     minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
+  },
+  configScroll: {
+    height: '100%',
+    minHeight: 0,
+    overflow: 'auto',
   },
 })
 
@@ -94,12 +99,11 @@ export function DraftsPage() {
   const { studioId, studio, llm } = useStudio()
   const [prompts, setPrompts] = useState<Prompt[]>([])
   const [mentions, setMentions] = useState<PromptMention[]>([])
-  const [autoLinked, setAutoLinked] = useState(false)
   const appliedRecommendation = useRef('')
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([])
   const [drafts, setDrafts] = useState<ContentDraft[]>([])
-  const [channel, setChannel] = useState<DraftChannel>('product-promo')
-  const [contentType, setContentType] = useState<ContentType>('case-breakdown')
+  const [platformId, setPlatformId] = useState<PublishPlatformId>('xiaohongshu')
+  const [promptCleared, setPromptCleared] = useState(false)
   const [assetIds, setAssetIds] = useState<string[]>([])
   const [assets, setAssets] = useState<Asset[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -164,7 +168,8 @@ export function DraftsPage() {
     setEditing(null)
     setAssets([])
     setAssetIds([])
-    setAutoLinked(false)
+    setPromptId('')
+    setPromptCleared(false)
     setLibraryPin('')
     handledPreset.current = ''
     openedDraft.current = ''
@@ -195,8 +200,11 @@ export function DraftsPage() {
 
   const selectedDiagnosis = diagnoses.find((item) => item.id === diagnosisId)
   const gaps = selectedDiagnosis?.checklist.filter((item) => item.status !== 'pass') ?? []
+  const platform = publishPlatform(platformId)
+  const contentType = platform.contentType
+  const channel = platform.channel
   const recommendation = useMemo(() => {
-    if (!studio) return { assetIds: [] as string[], rankedIds: [] as string[], promptId: null as string | null }
+    if (!studio) return { assetIds: [] as string[], rankedIds: [] as string[], promptId: null as string | null, promptIds: [] as string[] }
     return recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
   }, [studio, contentType, assets, prompts, mentions])
   const recommendedPrompt = prompts.find((item) => item.id === recommendation.promptId) ?? null
@@ -216,16 +224,14 @@ export function DraftsPage() {
       setNotice('这条素材不可公开，起草时不能勾选。')
       return
     }
-    const hinted = contentTypeForAsset(asset.type)
-    setContentType(hinted)
-    setChannel(channelForContentType(hinted))
+    setPlatformId(platformForAssetType(asset.type))
     setLibraryPin(asset.id)
     appliedRecommendation.current = ''
   }, [presetAsset, studio, assets, navigate])
 
   useEffect(() => {
     if (!studio || assets.length === 0) return
-    const key = `${studio.id}:${contentType}:${assets.map((item) => item.id).join(',')}:${libraryPin}`
+    const key = `${studio.id}:${platformId}:${assets.map((item) => item.id).join(',')}:${libraryPin}`
     if (appliedRecommendation.current === key) return
     appliedRecommendation.current = key
     const next = recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
@@ -235,12 +241,11 @@ export function DraftsPage() {
     setAssetIds(ids)
     if (brandMention === 'none') {
       setPromptId('')
-      setAutoLinked(false)
       return
     }
+    setPromptCleared(false)
     setPromptId(next.promptId ?? '')
-    setAutoLinked(Boolean(next.promptId))
-  }, [studio, contentType, assets, prompts, mentions, libraryPin])
+  }, [studio, platformId, contentType, assets, prompts, mentions, libraryPin])
 
   const rerank = () => {
     if (!studio) return
@@ -249,11 +254,10 @@ export function DraftsPage() {
     setAssetIds(next.assetIds)
     if (brandMention === 'none') {
       setPromptId('')
-      setAutoLinked(false)
       return
     }
+    setPromptCleared(false)
     setPromptId(next.promptId ?? '')
-    setAutoLinked(Boolean(next.promptId))
   }
 
   const recommendedAssets = recommendation.assetIds
@@ -327,7 +331,8 @@ export function DraftsPage() {
           length,
           brandMention,
           assetIds,
-          promptId: promptId || null,
+          promptId: brandMention === 'none' ? null : promptId || null,
+          linkPrompt: brandMention === 'light' && !promptCleared,
           diagnosisId: diagnosisId || null,
           gapId: gapId || null,
         }),
@@ -485,36 +490,25 @@ export function DraftsPage() {
   const configFields = (
     <VStack gap={3}>
       <Heading level={2}>配置</Heading>
-      <Collapsible defaultIsOpen={false} trigger="品牌边界">
-        <VStack gap={2}>
-          <Text color="secondary">语气、禁用词和合规红线来自品牌页。案例、产品和数据成效在下面勾选。</Text>
-          <Text>{studio?.voice?.trim() ? `语气：${studio.voice.trim()}` : '还没有写品牌语气。'}</Text>
-          <Text>{studio?.bannedWords?.trim() ? `禁用词：${studio.bannedWords.trim()}` : '没有禁用词。'}</Text>
-          <Text>{studio?.compliance?.trim() ? `合规红线：${studio.compliance.trim()}` : '没有额外合规红线。'}</Text>
-          <HStack gap={2} wrap="wrap">
-            <Button label="打开素材库" size="sm" variant="secondary" onClick={() => navigate('/library')} />
-            <Button label="到品牌里修改" size="sm" variant="secondary" onClick={() => navigate('/studio')} />
-          </HStack>
-        </VStack>
-      </Collapsible>
       <Selector
-        label="内容类型"
-        value={contentType}
-        options={CONTENT_TYPES.map((item) => ({ value: item.id, label: item.label }))}
+        label="发布平台"
+        description="先选发到哪里。格式会跟着变：小红书是短帖，公众号是长文，知乎是回答，thread 是一串短句。"
+        value={platformId}
+        options={PUBLISH_PLATFORMS.map((item) => ({ value: item.id, label: item.label, description: item.format }))}
         onChange={(value) => {
-          const next = CONTENT_TYPES.find((item) => item.id === value)
+          const next = PUBLISH_PLATFORMS.find((item) => item.id === value)
           if (!next) return
           setLibraryPin('')
-          setContentType(next.id)
-          setChannel(channelForContentType(next.id))
+          setPlatformId(next.id)
         }}
       />
+      <Text color="secondary">这条按「{platform.format}」来写。</Text>
       <VStack gap={2}>
         <HStack gap={2} vAlign="center" wrap="wrap">
-          <Heading level={3}>推荐素材</Heading>
+          <Heading level={3}>主题 / 素材</Heading>
           <Button label="重新推荐" size="sm" variant="ghost" onClick={rerank} isDisabled={!studio || assets.length === 0} />
         </HStack>
-        <Text color="secondary">已按内容类型推荐，可取消勾选或打开素材库另选</Text>
+        <Text color="secondary">已按发布平台推荐，可取消勾选或打开素材库另选</Text>
         {checklist.length === 0 ? (
           <Text color="secondary">这一类型还没有可公开的素材。</Text>
         ) : (
@@ -538,80 +532,92 @@ export function DraftsPage() {
         )}
         <Button label="从素材库挑选" size="sm" variant="secondary" onClick={openPicker} />
       </VStack>
-      {brandMention !== 'none' && recommendedPrompt && promptId === recommendedPrompt.id ? (
-        <Text color="secondary">已按内容类型推荐：{recommendedPrompt.text}</Text>
-      ) : null}
       <Selector
-        label="渠道"
-        description="决定建议落到官网的哪一类页面。内容类型会先带一个默认渠道。"
-        value={channel}
-        options={DRAFT_CHANNELS.map((item) => ({ value: item.id, label: item.label, description: item.hint }))}
-        onChange={(value) => {
-          const next = DRAFT_CHANNELS.find((item) => item.id === value)
-          if (next) setChannel(next.id)
-        }}
-      />
-      <Selector
-        label="植入强度"
-        description="不植入时全文不出现品牌。软植入正文仍是故事，结尾轻轻带一次品牌或官网。明确种草才会写下一步。"
+        label="植入（关联题目）"
+        description={IMPLANT_PURPOSE}
         value={brandMention}
         options={IMPLANT_LEVELS.map((item) => ({ value: item.id, label: item.label, description: item.description }))}
         onChange={(value) => {
           if (value !== 'none' && value !== 'light' && value !== 'guide') return
           setBrandMention(value)
           if (value === 'none') {
-            if (autoLinked) {
-              setPromptId('')
-              setAutoLinked(false)
-            }
+            setPromptId('')
+            setPromptCleared(true)
             return
           }
+          setPromptCleared(false)
           if (!promptId && recommendation.promptId) {
             setPromptId(recommendation.promptId)
-            setAutoLinked(true)
           }
         }}
       />
+      <Text color="secondary">{IMPLANT_PURPOSE}</Text>
       <Text color="secondary">
         {brandMention === 'none'
-          ? '不植入：正文任何地方都不出现品牌名。'
+          ? '不植入：不把题目写进正文，也不强行带品牌。'
           : brandMention === 'light'
-            ? '正文仍是故事；结尾会轻轻带一次品牌或官网，不会写成硬广。'
-            : '明确种草：结尾会写出品牌、官网和下一步，比软植入更直接。'}
+            ? '软植入：把一道相关题目的答案写进故事。题库为空时，才在结尾轻轻带一次品牌或官网。'
+            : '明确种草：题目可写可不写。结尾会写出品牌、官网和下一步。'}
       </Text>
+      {brandMention !== 'none' ? (
+        <Selector
+          label="关联题目"
+          description={brandMention === 'light' ? '默认带上一道最相关、目前较少被提到的题。可以换，也可以清空。' : '可选。留空就只写更明确的品牌收束。'}
+          value={promptId}
+          hasSearch
+          options={[{ value: '', label: '不关联题目' }, ...prompts.map((item) => ({ value: item.id, label: item.text }))]}
+          onChange={(value) => {
+            const next = value || ''
+            setPromptId(next)
+            setPromptCleared(!next)
+          }}
+        />
+      ) : null}
+      {brandMention !== 'none' && recommendedPrompt && promptId === recommendedPrompt.id ? (
+        <Text color="secondary">已推荐：{recommendedPrompt.text}</Text>
+      ) : null}
       {brandMention === 'light' && promptId ? <Text color="secondary">{SOFT_IMPLANT_HINT}</Text> : null}
-      <TextInput label="目标读者" description="可空。不填就用品牌资料里的客户画像。" value={audience} onChange={setAudience} width="100%" />
-      <TextInput label="语气" description="可空。不填就用品牌语气。" value={tone} onChange={setTone} width="100%" />
-      <Selector
-        label="长度"
-        value={length}
-        options={[
-          { value: 'short', label: '短' },
-          { value: 'medium', label: '中' },
-          { value: 'long', label: '长' },
-        ]}
-        onChange={(value) => {
-          if (value === 'short' || value === 'medium' || value === 'long') setLength(value)
-        }}
-      />
+      {recommendation.promptIds.length > 1 && brandMention === 'light' ? (
+        <Text color="secondary">
+          另外相关：
+          {recommendation.promptIds
+            .filter((id) => id !== promptId)
+            .map((id) => prompts.find((item) => item.id === id)?.text)
+            .filter(Boolean)
+            .join('；')}
+        </Text>
+      ) : null}
+      <VStack gap={2}>
+        <Heading level={3}>语气 / 目标读者</Heading>
+        <Text color="secondary">决定稿子像在对谁说话。不填就用品牌页里的语气和客户画像。</Text>
+        <TextInput label="目标读者" description="写给谁看，例如设备部长或第一次做知识库的团队。" value={audience} onChange={setAudience} width="100%" />
+        <TextInput label="语气" description="以什么角色来写，例如驻场工程师对着业务方讲已经发生的变化。" value={tone} onChange={setTone} width="100%" />
+      </VStack>
       <Collapsible defaultIsOpen={false} trigger="高级">
         <VStack gap={3}>
-          <Text color="secondary">关联题目、诊断和缺口。不选也能生成。</Text>
           <Selector
-            label="关联题目"
-            description="可选。不植入时不会写进正文。软植入只把它当作故事里的一个角度。"
-            value={promptId}
-            hasSearch
-            options={[{ value: '', label: '不关联题目' }, ...prompts.map((item) => ({ value: item.id, label: item.text }))]}
+            label="长度"
+            value={length}
+            options={[
+              { value: 'short', label: '短' },
+              { value: 'medium', label: '中' },
+              { value: 'long', label: '长' },
+            ]}
             onChange={(value) => {
-              const next = value || ''
-              setPromptId(next)
-              setAutoLinked(Boolean(next) && next === recommendation.promptId)
+              if (value === 'short' || value === 'medium' || value === 'long') setLength(value)
             }}
           />
-          {promptId && promptId === recommendation.promptId ? <Text color="secondary">已按内容类型推荐</Text> : null}
-          {brandMention === 'light' && promptId ? <Text color="secondary">{SOFT_IMPLANT_HINT}</Text> : null}
-          {brandMention === 'none' && promptId ? <Text color="secondary">不植入时，这道题不会写进正文。</Text> : null}
+          <Collapsible defaultIsOpen={false} trigger="品牌边界">
+            <VStack gap={2}>
+              <Text color="secondary">禁用词和合规红线来自品牌页。语气和读者在上面填写。</Text>
+              <Text>{studio?.bannedWords?.trim() ? `禁用词：${studio.bannedWords.trim()}` : '没有禁用词。'}</Text>
+              <Text>{studio?.compliance?.trim() ? `合规红线：${studio.compliance.trim()}` : '没有额外合规红线。'}</Text>
+              <HStack gap={2} wrap="wrap">
+                <Button label="打开素材库" size="sm" variant="secondary" onClick={() => navigate('/library')} />
+                <Button label="到品牌里修改" size="sm" variant="secondary" onClick={() => navigate('/studio')} />
+              </HStack>
+            </VStack>
+          </Collapsible>
           <Selector
             label="关联诊断"
             description="可选。选一次诊断后，可以指定一个未通过的检查项。"
@@ -723,9 +729,11 @@ export function DraftsPage() {
       <TextArea
         label="建议被引用的句子"
         description={
-          brandMention === 'guide'
-            ? '一行一句。回答引擎适合整句引用，明确种草时每句可以带上品牌名称。'
-            : '一行一句。抽出故事里的事实。不植入和软植入的引用句不写品牌名。'
+          brandMention === 'light' && promptId
+            ? '一行一句。这些句子要能直接回答上面关联的题目。'
+            : brandMention === 'guide'
+              ? '一行一句。明确种草时可以带上品牌名称。'
+              : '一行一句。抽出故事里的事实，不把品牌名写进引用句。'
         }
         value={cites}
         onChange={(value) => {
@@ -751,7 +759,7 @@ export function DraftsPage() {
       <Heading level={2}>草稿</Heading>
       <EmptyState
         title={narrow ? '先在上方选素材并生成' : '先在左侧选素材并生成'}
-        description="选好内容类型和可公开的素材，再点生成草稿。标题和正文会出现在这里，改完再保存。"
+        description="选好发布平台和素材，再点生成草稿。标题和正文会出现在这里，改完再保存。"
       />
     </VStack>
   )
@@ -772,7 +780,15 @@ export function DraftsPage() {
       xstyle={styles.workspace}
       start={
         <LayoutPanel width={380} hasDivider isScrollable={false} label="起草配置" padding={0}>
-          <Layout height="fill" content={<LayoutContent>{configFields}</LayoutContent>} footer={<LayoutFooter>{generateButton}</LayoutFooter>} />
+          <Layout
+            height="fill"
+            content={
+              <LayoutContent>
+                <div {...stylex.props(styles.configScroll)}>{configFields}</div>
+              </LayoutContent>
+            }
+            footer={<LayoutFooter>{generateButton}</LayoutFooter>}
+          />
         </LayoutPanel>
       }
       content={
@@ -788,7 +804,7 @@ export function DraftsPage() {
   return (
     <PageFrame
       title={draftId ? '编辑草稿' : '新建草稿'}
-      description="故事优先，不硬广，不凑字。按渠道起草，发布在站外完成。"
+      description="故事优先，不硬广，不凑字。先选发布平台，再用素材把相关题目答成能被引用的句子。"
     >
       <VStack gap={3} height="100%" xstyle={styles.page}>
         <HStack gap={2} vAlign="center">

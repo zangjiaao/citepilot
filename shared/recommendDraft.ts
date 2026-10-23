@@ -41,6 +41,7 @@ export interface DraftRecommendation {
   assetIds: string[]
   rankedIds: string[]
   promptId: string | null
+  promptIds: string[]
 }
 
 type PromptLike = Pick<Prompt, 'id' | 'text' | 'cluster'>
@@ -60,10 +61,12 @@ export function recommendDraftSelection(input: {
   const cap = SHORT_TYPES.has(input.contentType) ? 2 : 5
   const strong = ranked.filter((item) => item.score >= STRONG_SCORE).length
   const count = ranked.length === 0 ? 0 : Math.min(cap, Math.max(1, Math.min(strong, cap)))
+  const promptIds = relatedDraftPrompts(input.contentType, input.studio, usable, input.prompts ?? [], input.mentions ?? [])
   return {
     assetIds: ranked.slice(0, count).map((item) => item.id),
     rankedIds: ranked.map((item) => item.id),
-    promptId: suggestPrompt(input.contentType, input.studio, usable, input.prompts ?? [], input.mentions ?? []),
+    promptId: promptIds[0] ?? null,
+    promptIds,
   }
 }
 
@@ -84,17 +87,17 @@ function scoreAsset(asset: Asset, contentType: ContentType, studio: StudioLike):
   return score
 }
 
-function suggestPrompt(
+export function relatedDraftPrompts(
   contentType: ContentType,
   studio: StudioLike,
   assets: Asset[],
   prompts: PromptLike[],
   mentions: PromptMention[],
-): string | null {
+): string[] {
   const terms = [...studioTerms(studio), ...assets.flatMap((item) => [item.title, ...item.tags, item.details.problem, item.details.industry])]
     .map((item) => item.trim())
     .filter((item) => item.length >= 2)
-  let best: { id: string; score: number; rate: number } | null = null
+  const ranked: Array<{ id: string; score: number; rate: number }> = []
   for (const prompt of prompts) {
     const overlap = terms.filter((term) => prompt.text.includes(term)).length
     const stats = mentionStats(prompt.id, mentions)
@@ -105,10 +108,10 @@ function suggestPrompt(
     if (stats.rate !== null && stats.rate >= 0.8) score -= 2
     const eligible = score >= 3 && (overlap > 0 || (stats.rate !== null && stats.rate < 0.5))
     if (!eligible) continue
-    const rate = stats.rate ?? 1
-    if (!best || score > best.score || (score === best.score && rate < best.rate)) best = { id: prompt.id, score, rate }
+    ranked.push({ id: prompt.id, score, rate: stats.rate ?? 1 })
   }
-  return best?.id ?? null
+  ranked.sort((a, b) => b.score - a.score || a.rate - b.rate || a.id.localeCompare(b.id))
+  return ranked.slice(0, 3).map((item) => item.id)
 }
 
 function mentionStats(promptId: string, mentions: PromptMention[]): { samples: number; rate: number | null } {

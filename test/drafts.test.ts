@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { acceptDraft, coerceUrlHint, copyDraftTitle, DRAFT_CHANNELS, formatDraftForCopy, parseDraftEdit, templateDraft } from '../shared/drafts.ts'
+import { acceptDraft, coerceUrlHint, copyDraftTitle, DRAFT_CHANNELS, formatDraftForCopy, parseDraftEdit, PLACEHOLDER_URL_HINT, templateDraft } from '../shared/drafts.ts'
 import { blankBrandProfile } from '../shared/brandProfile.ts'
 import type { Studio } from '../shared/types.ts'
 
@@ -30,7 +30,8 @@ describe('templateDraft', () => {
     expect(draft.body).toContain('制造企业设备故障问答')
     expect(draft.citeSentences.length).toBeGreaterThanOrEqual(3)
     expect(draft.citeSentences.every((sentence) => sentence.includes('澄川智能体工场'))).toBe(true)
-    expect(draft.urlHint).toContain('https://example.com/product')
+    expect(draft.urlHint).toBe(PLACEHOLDER_URL_HINT)
+    expect(draft.urlHint).not.toContain('example.com')
     expect(formatDraftForCopy(draft)).toContain('建议被引用的句子')
   })
 
@@ -46,8 +47,8 @@ describe('templateDraft', () => {
     expect(draft.body).toContain('企业知识库 RAG 项目一般包含哪些交付物？')
     expect(draft.body).toContain('可引用的问答')
     expect(draft.body).toContain('页面没有 FAQ')
-    expect(draft.urlHint).toContain('/faq')
-    expect(draft.urlHint.startsWith('https://example.com/faq')).toBe(true)
+    expect(draft.urlHint).toBe(PLACEHOLDER_URL_HINT)
+    expect(draft.urlHint).not.toContain('example.com')
   })
 
   it('replaces a sneaked example.com hint when the studio site is somewhere else', () => {
@@ -55,7 +56,8 @@ describe('templateDraft', () => {
     expect(coerceUrlHint('https://www.oak-studio.org/custom — 说明', 'https://www.oak-studio.org/', '/faq')).toBe(
       'https://www.oak-studio.org/custom — 说明',
     )
-    expect(coerceUrlHint('https://example.com/faq', 'https://example.com', '/faq')).toBe('https://example.com/faq')
+    expect(coerceUrlHint('https://example.com/faq', 'https://example.com', '/faq')).toBe(PLACEHOLDER_URL_HINT)
+    expect(coerceUrlHint('https://example.com/faq', 'https://example.com', '/faq')).not.toContain('example.com')
   })
 
   it('gives every channel its own title and a body that names the studio', () => {
