@@ -10,9 +10,10 @@ export const LLM_TEST_TIMEOUT_MS = 25_000
 
 /**
  * 连接探测的补全上限。
- * 推理模型会先把 token 花在 reasoning 上。上限只有 16 时，可见 content 经常是空的，
- * Cloudflare 的 OpenAI 兼容转换会返回 500「Response conversion failed: Input is undefined or empty」。
+ * 推理模型会先把 token 花在 reasoning 上，上限太小会让可见 content 为空。
  * 起草仍使用配置里的 maxTokens，不受这个探测上限影响。
+ * MiniMax 在 Cloudflare 统一计费上即使用 512 或 2048，非流式仍会 500；
+ * 对话补全改为流式后再拼回全文，见 requestBody。
  */
 export const LLM_TEST_MAX_TOKENS = 512
 
@@ -37,7 +38,7 @@ export async function completeJson(config: LlmCallConfig, system: string, user: 
   }
   const payload = await readPayload(response)
   const content = readModelText(payload)
-  if (!content) throw new Error(terminalError(payload) || '模型没有返回内容')
+  if (!content) throw new Error(terminalError(payload) || providerMessage(payload) || '模型没有返回内容')
   return extractJson(content)
 }
 
@@ -55,7 +56,7 @@ export async function testLlmConnection(config: LlmCallConfig): Promise<{ ok: tr
     }
     const payload = await readPayload(response)
     const reply = readModelText(payload).trim()
-    if (!reply) return { ok: false, error: terminalError(payload) || '模型没有返回内容' }
+    if (!reply) return { ok: false, error: terminalError(payload) || providerMessage(payload) || '模型没有返回内容' }
     return { ok: true, reply: reply.slice(0, 80) }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
@@ -119,6 +120,10 @@ function requestBody(
   const body: Record<string, unknown> = {
     model: config.model,
     temperature,
+    // Cloudflare 对 MiniMax（minimax/m2.7、minimax/m3）的非流式转换会 500：
+    // Response conversion failed: Input is undefined or empty。流式不走这个转换。
+    // 其它 OpenAI 兼容接口同样带上 stream；若仍返回 JSON，按非流式解析。
+    stream: true,
     messages: system
       ? [
           { role: 'system', content: system },
@@ -166,10 +171,114 @@ function isTimeoutError(error: unknown, depth = 0): boolean {
 }
 
 async function readPayload(response: Response): Promise<unknown> {
+  const text = await response.text()
+  if (isEventStream(response, text)) return aggregateChatStream(text)
   try {
-    return await response.json()
+    return JSON.parse(text) as unknown
   } catch {
     throw new Error('模型没有返回可解析的 JSON')
+  }
+}
+
+function isEventStream(response: Response, text: string): boolean {
+  const trimmed = text.trimStart().replace(/^\uFEFF/, '')
+  if (!trimmed || trimmed.startsWith('{') || trimmed.startsWith('[')) return false
+  const type = response.headers.get('content-type') ?? ''
+  if (type.includes('text/event-stream')) return true
+  return trimmed.startsWith('data:') || trimmed.startsWith('event:') || trimmed.startsWith(':')
+}
+
+/**
+ * 把对话补全 SSE 拼成一条 assistant 文本。
+ * 有完整 message.content 时用它；否则按顺序拼接 delta.content。
+ * reasoning_content 是推理过程，不计入回复。
+ */
+function aggregateChatStream(text: string): unknown {
+  const deltas: string[] = []
+  let finalContent = ''
+  let error = ''
+  for (const data of sseDataPayloads(text)) {
+    if (!data || data === '[DONE]') continue
+    let payload: unknown
+    try {
+      payload = JSON.parse(data) as unknown
+    } catch {
+      continue
+    }
+    const message = providerMessage(payload)
+    if (message) error = message
+    const piece = chatStreamPiece(payload)
+    if (piece.final) finalContent = piece.final
+    if (piece.delta) deltas.push(piece.delta)
+  }
+  const content = finalContent || deltas.join('')
+  if (content) return { choices: [{ message: { content } }] }
+  if (error) return { error: { message: error } }
+  return { choices: [{ message: { content: '' } }] }
+}
+
+function chatStreamPiece(payload: unknown): { final: string; delta: string } {
+  if (!payload || typeof payload !== 'object') return { final: '', delta: '' }
+  const choices = (payload as { choices?: unknown }).choices
+  if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== 'object') {
+    return { final: readModelText(payload), delta: '' }
+  }
+  const choice = choices[0] as { message?: { content?: unknown }; delta?: { content?: unknown } }
+  return {
+    final: textContent(choice.message?.content),
+    delta: textContent(choice.delta?.content),
+  }
+}
+
+function textContent(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  const parts: string[] = []
+  for (const part of content) {
+    if (typeof part === 'string') {
+      parts.push(part)
+      continue
+    }
+    if (!part || typeof part !== 'object') continue
+    const text = (part as { text?: unknown }).text
+    if (typeof text === 'string') parts.push(text)
+  }
+  return parts.join('')
+}
+
+function sseDataPayloads(text: string): string[] {
+  const payloads: string[] = []
+  let dataLines: string[] = []
+  const flush = () => {
+    if (dataLines.length === 0) return
+    payloads.push(dataLines.join('\n').trim())
+    dataLines = []
+  }
+  const normalized = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  for (const line of normalized.split('\n')) {
+    if (line === '') {
+      flush()
+      continue
+    }
+    if (line.startsWith(':')) continue
+    if (!line.startsWith('data:')) continue
+    const value = line.slice(5).replace(/^ /, '')
+    if (dataLines.length === 1 && isStandaloneSseData(dataLines[0])) flush()
+    dataLines.push(value)
+  }
+  flush()
+  return payloads
+}
+
+function isStandaloneSseData(value: string): boolean {
+  const trimmed = value.trim()
+  if (trimmed === '[DONE]') return true
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false
+  try {
+    JSON.parse(trimmed)
+    return true
+  } catch {
+    return false
   }
 }
 

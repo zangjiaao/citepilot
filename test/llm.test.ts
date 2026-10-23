@@ -46,6 +46,18 @@ function chat(content: string) {
   return { choices: [{ message: { content } }] }
 }
 
+function sseResponse(chunks: unknown[], options?: { separator?: string; contentType?: string | null }): Response {
+  const separator = options?.separator ?? '\n\n'
+  const body = chunks.map((chunk) => `data: ${typeof chunk === 'string' ? chunk : JSON.stringify(chunk)}`).join(separator) + separator
+  const headers = new Headers()
+  if (options?.contentType !== null) headers.set('content-type', options?.contentType ?? 'text/event-stream; charset=utf-8')
+  return new Response(body, { status: 200, headers })
+}
+
+function delta(content: unknown, extra?: Record<string, unknown>) {
+  return { choices: [{ index: 0, delta: { ...extra, content } }] }
+}
+
 function timeoutError(): Error {
   const error = new Error('The operation was aborted due to timeout')
   error.name = 'TimeoutError'
@@ -74,6 +86,7 @@ describe('completeJson', () => {
     expect(bodies[0]).toMatchObject({
       model: 'deepseek-chat',
       response_format: { type: 'json_object' },
+      stream: true,
     })
     expect(bodies[0]).not.toHaveProperty('max_tokens')
     expect(bodies[0]).not.toHaveProperty('max_completion_tokens')
@@ -188,8 +201,10 @@ describe('completeJson', () => {
     expect(bodies[0]).not.toHaveProperty('messages')
     expect(bodies[0]).not.toHaveProperty('response_format')
     expect(bodies[0]).not.toHaveProperty('temperature')
+    expect(bodies[0]).not.toHaveProperty('stream')
     expect(bodies[1]).not.toHaveProperty('text')
     expect(bodies[1]).not.toHaveProperty('messages')
+    expect(bodies[1]).not.toHaveProperty('stream')
   })
 
   it('drops temperature when a Responses model rejects it', async () => {
@@ -259,12 +274,51 @@ describe('completeJson', () => {
       }),
     )
 
-    await expect(completeJson({ ...cloudflare, model: 'minimax/m3.1-flash', maxTokens: 1000 }, '系统', '用户', 0.4)).resolves.toEqual({
+    await expect(completeJson({ ...cloudflare, model: 'minimax/m3', maxTokens: 1000 }, '系统', '用户', 0.4)).resolves.toEqual({
       ok: true,
     })
-    expect(bodies[0]).toMatchObject({ max_tokens: 1000, response_format: { type: 'json_object' } })
+    expect(bodies[0]).toMatchObject({ model: 'minimax/m3', max_tokens: 1000, response_format: { type: 'json_object' }, stream: true })
     expect(bodies[0]).not.toHaveProperty('max_completion_tokens')
     expect(bodies[0]).not.toHaveProperty('max_output_tokens')
+  })
+
+  it('aggregates a streamed MiniMax completion and ignores reasoning_content', async () => {
+    const bodies: unknown[] = []
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)))
+        return sseResponse([
+          delta(null, { reasoning_content: '{"ok":false}' }),
+          delta('{"ok":'),
+          delta('true}'),
+          '[DONE]',
+        ])
+      }),
+    )
+
+    await expect(completeJson({ ...cloudflare, model: 'minimax/m2.7', maxTokens: 2048 }, '系统', '用户', 0.4)).resolves.toEqual({
+      ok: true,
+    })
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]).toMatchObject({ model: 'minimax/m2.7', max_tokens: 2048, stream: true })
+  })
+
+  it('prefers a streamed final message over concatenated deltas', async () => {
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        sseResponse([
+          delta('{"ok":'),
+          { choices: [{ index: 0, delta: { content: 'false}' }, message: { content: '{"ok":true}' } }] },
+          '[DONE]',
+        ]),
+      ),
+    )
+
+    await expect(completeJson(cloudflare, '系统', '用户', 0.4)).resolves.toEqual({ ok: true })
   })
 })
 
@@ -289,6 +343,7 @@ describe('testLlmConnection', () => {
     expect(bodies[0]).not.toHaveProperty('response_format')
     expect(bodies[0]).toMatchObject({
       max_tokens: LLM_TEST_MAX_TOKENS,
+      stream: true,
       messages: [{ role: 'user', content: '只回复一个字：好' }],
     })
     expect(bodies[0]).not.toHaveProperty('max_completion_tokens')
@@ -308,12 +363,13 @@ describe('testLlmConnection', () => {
       }),
     )
 
-    const minimax = { ...cloudflare, model: 'minimax/m3.1-flash' }
+    const minimax = { ...cloudflare, model: 'minimax/m3' }
     await expect(testLlmConnection(minimax)).resolves.toEqual({ ok: true, reply: '好' })
     expect(bodies[0]).toMatchObject({
-      model: 'minimax/m3.1-flash',
+      model: 'minimax/m3',
       max_tokens: LLM_TEST_MAX_TOKENS,
       max_completion_tokens: LLM_TEST_MAX_TOKENS,
+      stream: true,
       messages: [{ role: 'user', content: '只回复一个字：好' }],
     })
     expect(bodies[0]).not.toHaveProperty('response_format')
@@ -346,6 +402,71 @@ describe('testLlmConnection', () => {
     expect(bodies[0]).not.toHaveProperty('temperature')
     expect(bodies[0]).not.toHaveProperty('max_tokens')
     expect(bodies[0]).not.toHaveProperty('max_completion_tokens')
+    expect(bodies[0]).not.toHaveProperty('stream')
+  })
+
+  it('reads MiniMax chat SSE and does not treat reasoning_content as the reply', async () => {
+    const bodies: unknown[] = []
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)))
+        return sseResponse(
+          [
+            { choices: [{ delta: { role: 'assistant', reasoning_content: 'The user wants a greeting.' } }] },
+            delta('Hi'),
+            delta(' there!'),
+            { choices: [{ delta: { content: '', reasoning_content: 'done' }, finish_reason: 'stop' }] },
+            '[DONE]',
+          ],
+          { separator: '\n' },
+        )
+      }),
+    )
+
+    await expect(testLlmConnection({ ...cloudflare, model: 'minimax/m2.7' })).resolves.toEqual({ ok: true, reply: 'Hi there!' })
+    expect(bodies[0]).toMatchObject({ model: 'minimax/m2.7', stream: true, max_completion_tokens: LLM_TEST_MAX_TOKENS })
+  })
+
+  it('does not accept reasoning_content alone as a connection reply', async () => {
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => sseResponse([{ choices: [{ delta: { reasoning_content: '好' } }] }, '[DONE]'])),
+    )
+
+    await expect(testLlmConnection({ ...cloudflare, model: 'minimax/m3' })).resolves.toEqual({
+      ok: false,
+      error: '模型没有返回内容',
+    })
+  })
+
+  it('surfaces an SSE error when the stream has no assistant content', async () => {
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        sseResponse([{ error: { message: 'Response conversion failed: Input is undefined or empty' } }, '[DONE]'], {
+          contentType: null,
+        }),
+      ),
+    )
+
+    await expect(testLlmConnection({ ...cloudflare, model: 'minimax/m3' })).resolves.toEqual({
+      ok: false,
+      error: 'Response conversion failed: Input is undefined or empty',
+    })
+  })
+
+  it('joins text parts inside streamed delta content', async () => {
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => sseResponse([delta([{ type: 'text', text: '好' }]), '[DONE]'])),
+    )
+
+    await expect(testLlmConnection(deepseek)).resolves.toEqual({ ok: true, reply: '好' })
   })
 
   it('reports a timed-out connection test as 模型请求超时', async () => {

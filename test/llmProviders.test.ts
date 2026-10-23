@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { completionsUrl, responsesUrl } from '../shared/json.ts'
-import { LLM_PRESETS, keepsStoredKey, maskApiKey, parseLlmDraft, pickConfigId } from '../shared/llmProviders.ts'
+import { LLM_PRESETS, apiStyleHint, keepsStoredKey, maskApiKey, parseLlmDraft, pickConfigId } from '../shared/llmProviders.ts'
 
 describe('llm providers', () => {
   it('includes the requested presets and masks a stored key', () => {
@@ -78,5 +78,8 @@ describe('llm providers', () => {
     expect(responsesUrl(saved.value.baseUrl)).toBe('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/responses')
     expect(completionsUrl('https://api.deepseek.com')).toBe('https://api.deepseek.com/chat/completions')
     expect(completionsUrl('https://api.openai.com/v1/responses')).toBe('https://api.openai.com/v1/chat/completions')
+    expect(apiStyleHint('chat')).toContain('minimax/m2.7')
+    expect(apiStyleHint('chat')).toContain('minimax/m3')
+    expect(apiStyleHint('chat')).not.toContain('m2.5')
   })
 })
