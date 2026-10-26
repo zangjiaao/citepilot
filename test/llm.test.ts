@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LlmCallConfig } from '../shared/llmProviders.ts'
+import { parseDraftToolCalls } from '../shared/draftTools.ts'
 import {
   DRAFT_TEMPLATE_WARNING,
   LLM_GENERATE_TIMEOUT_MS,
   LLM_TEST_MAX_TOKENS,
   LLM_TEST_TIMEOUT_MS,
   completeJson,
+  completeWithTools,
   draftModelWarning,
   testLlmConnection,
 } from '../worker/llm.ts'
@@ -479,5 +481,43 @@ describe('testLlmConnection', () => {
     )
 
     await expect(testLlmConnection(cloudflare)).resolves.toEqual({ ok: false, error: '模型请求超时' })
+  })
+})
+
+describe('completeWithTools', () => {
+  it('aggregates streamed tool call deltas and does not force json mode', async () => {
+    const bodies: unknown[] = []
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)))
+        return sseResponse([
+          { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'replace_paragraph', arguments: '' } }] } }] },
+          { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{"id":"p1","text":"新段落"}' } }] } }] },
+          '[DONE]',
+        ])
+      }),
+    )
+
+    const payload = await completeWithTools(cloudflare, '系统', '用户', [{ type: 'function', function: { name: 'replace_paragraph' } }], 0.3)
+    expect(bodies[0]).toMatchObject({ stream: true, tool_choice: 'auto' })
+    expect(bodies[0]).not.toHaveProperty('response_format')
+    expect(parseDraftToolCalls(payload)).toEqual([{ name: 'replace_paragraph', arguments: { id: 'p1', text: '新段落' } }])
+  })
+
+  it('falls back to json calls when the provider rejects tools', async () => {
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { tools?: unknown }
+        if (body.tools) return jsonResponse({ error: { message: 'tools are not supported' } }, 400)
+        return jsonResponse(chat('{"calls":[{"name":"update_draft","arguments":{"title":"新的标题在这里"}}]}'))
+      }),
+    )
+
+    const payload = await completeWithTools(cloudflare, '系统', '用户', [{ type: 'function', function: { name: 'update_draft' } }], 0.3)
+    expect(parseDraftToolCalls(payload)).toEqual([{ name: 'update_draft', arguments: { title: '新的标题在这里' } }])
   })
 })

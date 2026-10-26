@@ -11,7 +11,8 @@ import { addedPromptSummary, assemblePromptGeneration, assessPromptCoverage, isC
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
 import { applyBrandMention, assembleDraftPrompt, channelForContentType, finishDraftBody, isContentType, isPublishableDraft, materialDraft, parseAssetIds, parseDraftOptions, placeholderShare, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
-import { acceptDraftRevision, assetFactsForRevision, NO_MODEL_REVISION, parseDraftChatHistory, recentDraftTurns, REVISION_UNCHANGED, reviseDraftPrompt } from '../shared/draftChat.ts'
+import { assetFactsForRevision, NO_MODEL_REVISION, parseDraftChatHistory, recentDraftTurns, REVISION_NO_TOOL, REVISION_UNCHANGED, reviseDraftPrompt } from '../shared/draftChat.ts'
+import { applyDraftTools, cleanChangedParagraphs, DRAFT_EDIT_TOOLS, parseDraftToolCalls } from '../shared/draftTools.ts'
 import { backfillDraftImages, draftImages } from '../shared/draftImages.ts'
 import { relatedDraftPrompts } from '../shared/recommendDraft.ts'
 import { readAssetDraft, type Asset } from '../shared/assets.ts'
@@ -50,7 +51,7 @@ import {
 import type { AppBindings } from './env.ts'
 import { HttpError } from './errors.ts'
 import { fetchPublic } from './fetchPage.ts'
-import { acceptGeneratedPrompts, acceptOwnSentiment, acceptSuggestions, acceptSummary, completeJson, DRAFT_TEMPLATE_WARNING, draftModelWarning } from './llm.ts'
+import { acceptGeneratedPrompts, acceptOwnSentiment, acceptSuggestions, acceptSummary, completeJson, completeWithTools, DRAFT_TEMPLATE_WARNING, draftModelWarning } from './llm.ts'
 import { registerModelRoutes } from './modelRoutes.ts'
 import { llmStatus, resolveLlm } from './models.ts'
 import { assetFromDraft, countAssets, deleteAsset, getAsset, insertAsset, listAssets, updateAsset } from './assets.ts'
@@ -725,34 +726,30 @@ app.post('/api/studios/:id/drafts/revise', async (c) => {
       history: recentDraftTurns(prior),
       assetFacts: assetFactsForRevision(assets),
     })
-    const raw = await completeJson(writer, prompt.system, prompt.user, 0.3)
-    const accepted = acceptDraftRevision(raw)
-    if (!accepted) return unchanged(REVISION_UNCHANGED)
-    const rewritten = rewriteGenericSentences(
-      accepted.body,
-      assets,
-      options.allowBragging,
-      `${current.title}\n${current.body}\n${current.urlHint}\n${current.citeSentences.join('\n')}`,
-    )
-    const body = rewritten.body.trim()
-    const urlHint = coerceUrlHint(accepted.urlHint, studio.website, channelMeta.path, parsed.value.channel, studio.name)
-    if (body.length < 40 || body.length > 8000 || urlHint.length < 8 || urlHint.length > 300) return unchanged(REVISION_UNCHANGED)
+    const raw = await completeWithTools(writer, prompt.system, prompt.user, DRAFT_EDIT_TOOLS, 0.3)
+    const applied = applyDraftTools(current, parseDraftToolCalls(raw))
+    if (!applied.ok) return unchanged(applied.error === '没有调用修改工具' ? REVISION_NO_TOOL : REVISION_UNCHANGED)
+    if (!applied.changed) return unchanged(applied.note || REVISION_UNCHANGED)
+    const allowed = `${current.title}\n${current.body}\n${current.urlHint}\n${current.citeSentences.join('\n')}`
+    const body = cleanChangedParagraphs(current.body, applied.draft.body, (text) => rewriteGenericSentences(text, assets, options.allowBragging, allowed).body).trim()
+    const urlHint = applied.draft.urlHint === current.urlHint ? current.urlHint : coerceUrlHint(applied.draft.urlHint, studio.website, channelMeta.path, parsed.value.channel, studio.name)
+    if (body.length < 40 || body.length > 8000 || urlHint.length < 8 || urlHint.length > 300 || applied.draft.citeSentences.length < 2) return unchanged(REVISION_UNCHANGED)
     const fields = {
       channel: parsed.value.channel,
-      title: accepted.title,
+      title: applied.draft.title,
       body,
-      citeSentences: accepted.citeSentences,
+      citeSentences: applied.draft.citeSentences,
       urlHint,
     }
     let saved: ContentDraft | undefined
     if (draftId) {
       saved = await updateDraft(c.env.DB, studio.id, draftId, fields, new Date().toISOString())
-      await rememberRevision(c.env.DB, studio.id, draftId, message, accepted.note)
+      await rememberRevision(c.env.DB, studio.id, draftId, message, applied.note)
     }
-    console.log(JSON.stringify({ message: 'draft revised', id: draftId || null, flags: rewritten.flags.length }))
+    console.log(JSON.stringify({ message: 'draft revised', id: draftId || null, tools: applied.tools }))
     return c.json({
       changed: true,
-      note: accepted.note,
+      note: applied.note,
       title: fields.title,
       body: fields.body,
       citeSentences: fields.citeSentences,

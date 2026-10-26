@@ -16,7 +16,7 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import * as stylex from '@stylexjs/stylex'
 import type { DraftChatTurn } from '../../../shared/draftChat.ts'
-import { IMPLANT_LEVELS, PUBLISH_PLATFORMS, REQUIREMENT_TEMPLATES, contentTypeForChannel, platformForAssetType, publishPlatform, type BrandMention, type PublishPlatformId } from '../../../shared/draftPrompt.ts'
+import { IMPLANT_LEVELS, PUBLISH_PLATFORMS, REQUIREMENT_TEMPLATES, platformForAssetType, publishPlatform, type BrandMention, type PublishPlatformId } from '../../../shared/draftPrompt.ts'
 import { platformFormatHint } from '../../../shared/platformFormats.ts'
 import { draftImages, type DraftImage } from '../../../shared/draftImages.ts'
 import { draftPickCap, recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
@@ -155,6 +155,7 @@ export function DraftsPage() {
   const [chat, setChat] = useState<DraftChatTurn[]>([])
   const [chatInput, setChatInput] = useState('')
   const [revising, setRevising] = useState(false)
+  const [showConfig, setShowConfig] = useState(() => !draftId)
   const [shareToken, setShareToken] = useState<string | null>(null)
   const [shareBusy, setShareBusy] = useState(false)
   const [libraryPin, setLibraryPin] = useState('')
@@ -197,6 +198,7 @@ export function DraftsPage() {
     setChat([])
     setChatInput('')
     setShareToken(null)
+    setShowConfig(true)
     load(studioId).catch((err: unknown) => setError(err instanceof Error ? err.message : '草稿加载失败'))
   }, [studioId])
 
@@ -216,7 +218,10 @@ export function DraftsPage() {
     setEditUrl(found.urlHint)
     setTheme(found.promptText || '')
     setPromptId(found.promptId || '')
+    const matched = PUBLISH_PLATFORMS.find((item) => item.channel === found.channel)
+    if (matched) setPlatformId(matched.id)
     setPreview(null)
+    setShowConfig(false)
   }, [draftId, drafts])
 
   useEffect(() => {
@@ -380,6 +385,7 @@ export function DraftsPage() {
       setChat([])
       setChatInput('')
       setShareToken(null)
+      setShowConfig(false)
       setNotice(
         result.warning
           ? result.warning
@@ -484,8 +490,8 @@ export function DraftsPage() {
     const instruction = chatInput.trim()
     if (!instruction || (!preview && !editing)) return
     const fields = editing
-      ? { channel: editChannel, title: editTitle.trim(), body: editBody.trim(), citeSentences: splitLines(editCites), urlHint: editUrl.trim() }
-      : { channel: preview?.channel ?? channel, ...currentBrief() }
+      ? { channel, title: editTitle.trim(), body: editBody.trim(), citeSentences: splitLines(editCites), urlHint: editUrl.trim() }
+      : { channel, ...currentBrief() }
     setRevising(true)
     setError('')
     try {
@@ -505,7 +511,7 @@ export function DraftsPage() {
           message: instruction,
           history: chat,
           assetIds,
-          contentType: editing ? contentTypeForChannel(editChannel) : contentType,
+          contentType,
           brandMention,
           requirements,
           theme,
@@ -515,6 +521,7 @@ export function DraftsPage() {
       setChatInput('')
       if (result.changed) {
         if (editing) {
+          setEditChannel(channel)
           setEditTitle(result.title)
           setEditBody(result.body)
           setEditCites(result.citeSentences.join('\n'))
@@ -525,6 +532,11 @@ export function DraftsPage() {
           setBody(result.body)
           setCites(result.citeSentences.join('\n'))
           setUrlHint(result.urlHint)
+          setPreview((current) =>
+            current
+              ? { ...current, channel, title: result.title, body: result.body, citeSentences: result.citeSentences, urlHint: result.urlHint }
+              : current,
+          )
           setSaved(false)
         }
       }
@@ -717,6 +729,7 @@ export function DraftsPage() {
           if (!next) return
           setLibraryPin('')
           setPlatformId(next.id)
+          setEditChannel(next.channel)
         }}
       />
       <Text color="secondary">{platformFormatHint(platform.id)}</Text>
@@ -827,10 +840,23 @@ export function DraftsPage() {
     </StackItem>
   )
 
-  const revisionPanel = (
+  const shareControls = editing ? (
     <VStack gap={2}>
-      <Heading level={3}>对话改稿</Heading>
-      <Text color="secondary">写下要改的地方，例如语气、长短、卖点或渠道限制。生成仍是入口，之后用对话改标题、正文和可引用句。</Text>
+      <HStack gap={2} wrap="wrap">
+        <Button label="复制分享链接" variant="secondary" onClick={() => void shareLink()} isLoading={shareBusy} />
+        {shareToken ? <Button label="停止分享" variant="ghost" onClick={() => void revokeShare()} isDisabled={shareBusy} /> : null}
+      </HStack>
+      {shareToken ? <Text color="secondary">{`${window.location.origin}/share/${shareToken}`}</Text> : null}
+    </VStack>
+  ) : (
+    <Text color="secondary">先保存这篇草稿，再复制分享链接。同事打开后只能看渲染效果。</Text>
+  )
+
+  const hasDraft = Boolean(preview || editing)
+  const chatPanel = (
+    <VStack gap={2}>
+      <Heading level={2}>对话改稿</Heading>
+      <Text color="secondary">当前配置会带进每一轮。改了平台、素材、主题或需求之后，下一句按新配置改，不必重新生成。说清要改哪一段；要整篇重写时直接说。</Text>
       {chat.length === 0 ? (
         <Text color="secondary">还没有对话。</Text>
       ) : (
@@ -840,21 +866,24 @@ export function DraftsPage() {
           </Text>
         ))
       )}
-      <TextArea label="修改要求" value={chatInput} onChange={setChatInput} rows={3} width="100%" />
-      <Button label="按这句话改" variant="secondary" onClick={() => void revise()} isLoading={revising} isDisabled={!chatInput.trim() || revising} />
-      {editing ? (
-        <VStack gap={2}>
-          <HStack gap={2} wrap="wrap">
-            <Button label="复制分享链接" variant="secondary" onClick={() => void shareLink()} isLoading={shareBusy} />
-            {shareToken ? <Button label="停止分享" variant="ghost" onClick={() => void revokeShare()} isDisabled={shareBusy} /> : null}
-          </HStack>
-          {shareToken ? <Text color="secondary">{`${window.location.origin}/share/${shareToken}`}</Text> : null}
-        </VStack>
-      ) : (
-        <Text color="secondary">先保存这篇草稿，再复制分享链接。同事打开后只能看渲染效果。</Text>
-      )}
     </VStack>
   )
+  const chatComposer = (
+    <VStack gap={2}>
+      <TextArea label="修改要求" value={chatInput} onChange={setChatInput} rows={3} width="100%" />
+      <Button label="按这句话改" variant="primary" width="100%" onClick={() => void revise()} isLoading={revising} isDisabled={!chatInput.trim() || revising} />
+      <Button label="查看/修改配置" variant="ghost" width="100%" onClick={() => setShowConfig(true)} />
+    </VStack>
+  )
+  const configActions = hasDraft ? (
+    <VStack gap={2}>
+      <Button label="返回对话" variant="secondary" width="100%" onClick={() => setShowConfig(false)} />
+      {generateButton}
+    </VStack>
+  ) : (
+    generateButton
+  )
+  const showChat = hasDraft && !showConfig
 
   const editor = editing ? (
     <VStack gap={3}>
@@ -878,14 +907,17 @@ export function DraftsPage() {
         options={DRAFT_CHANNELS.map((item) => ({ value: item.id, label: item.label, description: item.hint }))}
         onChange={(value) => {
           const next = DRAFT_CHANNELS.find((item) => item.id === value)
-          if (next) setEditChannel(next.id)
+          if (!next) return
+          setEditChannel(next.id)
+          const matched = PUBLISH_PLATFORMS.find((item) => item.channel === next.id)
+          if (matched) setPlatformId(matched.id)
         }}
       />
       <TextInput label="标题" value={editTitle} onChange={setEditTitle} width="100%" />
       {bodyArea({ value: editBody, onChange: setEditBody, images: imageStrip })}
       {placementBlock(editBody, editing.promptText)}
       {imageList}
-      {revisionPanel}
+      {shareControls}
     </VStack>
   ) : preview ? (
     <VStack gap={3}>
@@ -926,7 +958,7 @@ export function DraftsPage() {
       })}
       {placementBlock(body, preview.promptText, brandMention)}
       {imageList}
-      {revisionPanel}
+      {shareControls}
     </VStack>
   ) : (
     <VStack gap={3} height="100%" minHeight={0}>
@@ -942,8 +974,8 @@ export function DraftsPage() {
     <VStack gap={4}>
       <Section>
         <VStack gap={3}>
-          {configFields}
-          {generateButton}
+          {showChat ? chatPanel : configFields}
+          {showChat ? chatComposer : configActions}
         </VStack>
       </Section>
       <Section id="draft-editor">{editor}</Section>
@@ -953,15 +985,15 @@ export function DraftsPage() {
       height="fill"
       xstyle={styles.workspace}
       start={
-        <LayoutPanel width={380} hasDivider isScrollable={false} label="起草配置" padding={0}>
+        <LayoutPanel width={380} hasDivider isScrollable={false} label={showChat ? '对话改稿' : '起草配置'} padding={0}>
           <Layout
             height="fill"
             content={
               <LayoutContent>
-                <div {...stylex.props(styles.configScroll)}>{configFields}</div>
+                <div {...stylex.props(styles.configScroll)}>{showChat ? chatPanel : configFields}</div>
               </LayoutContent>
             }
-            footer={<LayoutFooter>{generateButton}</LayoutFooter>}
+            footer={<LayoutFooter>{showChat ? chatComposer : configActions}</LayoutFooter>}
           />
         </LayoutPanel>
       }
@@ -976,7 +1008,7 @@ export function DraftsPage() {
   return (
     <PageFrame
       title={draftId ? '编辑草稿' : '新建草稿'}
-      description="配置只有平台、素材、主题和需求。生成后可以用对话改稿，保存后可以分享。发布仍在站外完成。"
+      description="配置只有平台、素材、主题和需求。生成后左侧换成对话改稿，也可以回去改配置。发布仍在站外完成。"
     >
       <VStack gap={3} height="100%" xstyle={styles.page}>
         <HStack gap={2} vAlign="center">

@@ -42,6 +42,39 @@ export async function completeJson(config: LlmCallConfig, system: string, user: 
   return extractJson(content)
 }
 
+const TOOL_FALLBACK_HINT =
+  '当前接口不接受工具调用。不要写散文。只输出 JSON：{"calls":[{"name":"replace_paragraph","arguments":{"id":"p1","text":"这一段的全文","note":"改了什么"}}]}。能改一段就不要用 update_draft。'
+
+/** 对话改稿。优先走工具调用；接口拒绝 tools 时退回 {"calls":[...]}。 */
+export async function completeWithTools(
+  config: LlmCallConfig,
+  system: string,
+  user: string,
+  tools: readonly unknown[],
+  fallbackTemperature: number,
+): Promise<unknown> {
+  if (!config.apiKey) throw new Error('还没有配置模型密钥')
+  const temperature = config.temperature ?? fallbackTemperature
+  let response: Response
+  try {
+    response = await postJson(requestUrl(config), config.apiKey, toolRequestBody(config, system, user, temperature, tools), LLM_GENERATE_TIMEOUT_MS)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    console.error(JSON.stringify({ message: 'llm tool request failed', error: detail }))
+    throw new Error(isTimeoutError(error) ? '模型请求超时' : '模型请求没有完成')
+  }
+  if (!response.ok) {
+    const detail = await providerErrorDetail(response)
+    if (response.status === 400 && /tool|function[_\s-]?call/i.test(detail)) {
+      console.error(JSON.stringify({ message: 'llm tools rejected', status: response.status, model: config.model, detail }))
+      return completeJson(config, system, `${user}\n\n${TOOL_FALLBACK_HINT}`, fallbackTemperature)
+    }
+    console.error(JSON.stringify({ message: 'llm status', status: response.status, model: config.model, detail }))
+    throw new Error(httpFailure(response.status, detail))
+  }
+  return readPayload(response)
+}
+
 export async function testLlmConnection(config: LlmCallConfig): Promise<{ ok: true; reply: string } | { ok: false; error: string }> {
   try {
     const response = await postJson(
@@ -136,6 +169,35 @@ function requestBody(
   return body
 }
 
+function toolRequestBody(
+  config: LlmCallConfig,
+  system: string,
+  user: string,
+  temperature: number,
+  tools: readonly unknown[],
+): Record<string, unknown> {
+  const body = requestBody(config, system, user, temperature, 'plain', false, config.maxTokens)
+  if (config.apiStyle === 'responses') {
+    body.tools = tools.map(toResponsesTool).filter((item): item is Record<string, unknown> => Boolean(item))
+    return body
+  }
+  body.tools = tools
+  body.tool_choice = 'auto'
+  return body
+}
+
+function toResponsesTool(tool: unknown): Record<string, unknown> | null {
+  if (!tool || typeof tool !== 'object') return null
+  const fn = (tool as { function?: { name?: unknown; description?: unknown; parameters?: unknown } }).function
+  if (!fn || typeof fn.name !== 'string') return null
+  return {
+    type: 'function',
+    name: fn.name,
+    description: typeof fn.description === 'string' ? fn.description : '',
+    parameters: fn.parameters ?? { type: 'object', properties: {} },
+  }
+}
+
 function httpFailure(status: number, detail: string): string {
   return detail ? `模型返回 HTTP ${status}：${detail}` : `模型返回 HTTP ${status}`
 }
@@ -197,6 +259,7 @@ function aggregateChatStream(text: string): unknown {
   const deltas: string[] = []
   let finalContent = ''
   let error = ''
+  const tools = new Map<number, { id: string; name: string; arguments: string }>()
   for (const data of sseDataPayloads(text)) {
     if (!data || data === '[DONE]') continue
     let payload: unknown
@@ -210,11 +273,49 @@ function aggregateChatStream(text: string): unknown {
     const piece = chatStreamPiece(payload)
     if (piece.final) finalContent = piece.final
     if (piece.delta) deltas.push(piece.delta)
+    absorbToolDeltas(payload, tools)
   }
   const content = finalContent || deltas.join('')
-  if (content) return { choices: [{ message: { content } }] }
+  const toolCalls = [...tools.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .filter(([, call]) => call.name)
+    .map(([index, call]) => ({
+      id: call.id || `call_${index}`,
+      type: 'function',
+      function: { name: call.name, arguments: call.arguments },
+    }))
+  if (content || toolCalls.length > 0) {
+    const message: Record<string, unknown> = { content }
+    if (toolCalls.length > 0) message.tool_calls = toolCalls
+    return { choices: [{ message }] }
+  }
   if (error) return { error: { message: error } }
   return { choices: [{ message: { content: '' } }] }
+}
+
+function absorbToolDeltas(payload: unknown, tools: Map<number, { id: string; name: string; arguments: string }>) {
+  if (!payload || typeof payload !== 'object') return
+  const choices = (payload as { choices?: unknown }).choices
+  if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== 'object') return
+  const choice = choices[0] as { delta?: { tool_calls?: unknown }; message?: { tool_calls?: unknown } }
+  collectToolChunks(choice.delta?.tool_calls, tools, 'delta')
+  collectToolChunks(choice.message?.tool_calls, tools, 'message')
+}
+
+function collectToolChunks(chunks: unknown, tools: Map<number, { id: string; name: string; arguments: string }>, mode: 'delta' | 'message') {
+  if (!Array.isArray(chunks)) return
+  for (const chunk of chunks) {
+    if (!chunk || typeof chunk !== 'object') continue
+    const record = chunk as { index?: unknown; id?: unknown; function?: { name?: unknown; arguments?: unknown } }
+    const index = typeof record.index === 'number' ? record.index : tools.size === 0 ? 0 : Math.max(...tools.keys())
+    const current = tools.get(index) ?? { id: '', name: '', arguments: '' }
+    if (typeof record.id === 'string' && record.id) current.id = record.id
+    if (typeof record.function?.name === 'string' && record.function.name) current.name = record.function.name
+    if (typeof record.function?.arguments === 'string') {
+      current.arguments = mode === 'message' ? record.function.arguments : current.arguments + record.function.arguments
+    }
+    tools.set(index, current)
+  }
 }
 
 function chatStreamPiece(payload: unknown): { final: string; delta: string } {

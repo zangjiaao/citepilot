@@ -32,6 +32,10 @@ describe('对话改稿', () => {
     expect(prompt.user).toContain(draft.title)
     expect(prompt.user).toContain('先改成列表')
     expect(prompt.system).toContain('不要写 example.com')
+    expect(prompt.system).toContain('replace_paragraph')
+    expect(prompt.system).toContain('update_draft')
+    expect(prompt.user).toContain('p1：')
+    expect(prompt.system).toContain('每一轮都要遵守')
   })
 
   it('accepts a complete revision and clips the note', () => {

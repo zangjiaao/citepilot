@@ -1,11 +1,14 @@
 import type { Asset, BrandMention } from './assets.ts'
 import { assetBlock } from './assets.ts'
 import { implantRule, NO_FABRICATION_RULE, SHOW_DONT_TELL_RULE, type ContentType, type DraftLength } from './draftPrompt.ts'
+import { splitDraftParagraphs } from './draftTools.ts'
 import { platformFormatRule } from './platformFormats.ts'
 
 export const NO_MODEL_REVISION = '没有配置生成模型，没法按对话改稿。到设置里配上密钥后再试。'
 
 export const REVISION_UNCHANGED = '这次改稿没有通过检查，正文还是原来的。'
+
+export const REVISION_NO_TOOL = '这次没有改到稿子上。可以说要改哪一段，或要求重写整篇。'
 
 export interface DraftChatTurn {
   role: 'user' | 'assistant'
@@ -72,17 +75,22 @@ export function reviseDraftPrompt(input: {
   const history = recentDraftTurns(input.history)
     .map((turn) => `${turn.role === 'user' ? '用户' : '改动'}：${turn.content}`)
     .join('\n')
+  const paragraphs = splitDraftParagraphs(input.draft.body)
+  const paragraphBlock = paragraphs.length > 0 ? paragraphs.map((item) => `${item.id}：${item.text}`).join('\n\n') : input.draft.body
   const system = [
-    '你在按对话修改一篇已经生成的草稿。用户的话是修改要求，不是新的素材。',
+    '你在按对话修改一篇已经生成的草稿。下面的配置是系统上下文，每一轮都要遵守。用户中途改了配置后，下一轮用新的配置，不必从头生成，除非用户明确要求重写。',
+    '用户的话是修改要求，不是新的素材。',
     NO_FABRICATION_RULE,
     SHOW_DONT_TELL_RULE,
     implantRule(input.brandMention, input.promptText, input.brand, input.website, input.contentType),
     platformFormatRule(input.contentType, input.length, input.brandMention),
-    '只改用户这次要求改的地方。标题、正文、可引用句和落点都要交回完整结果，不要只回差异。',
+    '用工具改稿，不要在回复正文里交回整篇新稿。',
+    '改一段时调用 replace_paragraph 或 update_section，只替换那个 id（p1、p2）或 index，其它段落保持原样。',
+    '加一段用 append_paragraph，删一段用 delete_paragraph。',
+    '只有用户明确要求重写整篇，或要改标题、可引用句、落点时，才调用 update_draft，并且只填要改的字段。',
     '没有真实官网时，闲鱼落点用闲鱼主页，视频号落点用视频号私信，不要写 example.com。',
     '不要编造价格、客户名、数字或网址。价格只有素材里已经写明才能照抄。',
-    '只输出 JSON：{"title":"...","body":"...","citeSentences":["...","..."],"urlHint":"...","note":"一两句说明改了什么"}',
-    'note 不超过 80 字，不要把正文再抄进 note。',
+    '工具的 note 用一两句说明改了什么，不超过 80 字，不要把正文再抄进 note。',
   ].join('\n')
   const user = [
     `渠道：${input.channelLabel}`,
@@ -91,7 +99,7 @@ export function reviseDraftPrompt(input: {
     `读者：${input.audience.trim() || (input.requirements?.trim() ? '见需求' : '沿用当前稿')}`,
     `语气：${input.tone.trim() || (input.requirements?.trim() ? '见需求' : '沿用当前稿')}`,
     `当前标题：${input.draft.title}`,
-    `当前正文：\n${input.draft.body}`,
+    `当前正文（按空行分段，改某一段时用对应 id）：\n${paragraphBlock}`,
     `当前可引用句：\n${input.draft.citeSentences.map((item) => `- ${item}`).join('\n')}`,
     `当前落点：${input.draft.urlHint}`,
     `素材事实（只能用这些；没有就只改写现有稿，不要补新事实）：\n${input.assetFacts.trim() || '没有勾选素材。不要新增事实、数字或价格。'}`,
