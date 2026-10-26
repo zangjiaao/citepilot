@@ -562,11 +562,10 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
   const selected = assets.filter((item): item is NonNullable<typeof item> => Boolean(item))
   const hidden = selected.find((item) => item.publicity === 'private')
   if (hidden) throw new HttpError(400, `「${hidden.title}」标成不可公开，不会用来起草`)
+  const themeText = optionalString(record, 'theme').trim().slice(0, 500)
+  if (themeText) promptText = themeText
   let linkedPromptId = promptId
-  if (options.brandMention === 'none') {
-    promptText = ''
-    linkedPromptId = ''
-  } else if (options.brandMention === 'light' && !promptText && record.linkPrompt !== false) {
+  if (!promptText && options.brandMention !== 'none' && record.linkPrompt !== false) {
     const bank = await listPrompts(c.env.DB, studio.id)
     const observations = await listObservations(c.env.DB, studio.id)
     const ranked = relatedDraftPrompts(
@@ -588,7 +587,7 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
   const context = { studio, channel, promptText, gapLabel, gapDetail }
   let brief =
     selected.length > 0
-      ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention, options.brandMention === 'none' ? '' : promptText, options.contentType)
+      ? materialDraft(studio, selected, channelMeta?.path ?? '/', options.brandMention, promptText, options.contentType)
       : templateDraft(context)
   let source: DraftPreview['source'] = 'template'
   let warning = ''
@@ -681,10 +680,10 @@ app.post('/api/studios/:id/drafts/revise', async (c) => {
   const parsed = parseDraftEdit(record)
   if (!parsed.ok) throw new HttpError(400, parsed.error)
   const draftId = optionalId(record.draftId)
-  let promptText = ''
+  let promptText = optionalString(record, 'theme').trim().slice(0, 500)
   if (draftId) {
     const existing = await getDraft(c.env.DB, studio.id, draftId)
-    promptText = existing.promptText
+    if (!promptText) promptText = existing.promptText
   }
   const options = parseDraftOptions(record, parsed.value.channel)
   const picked = parseAssetIds(record.assetIds)
@@ -720,6 +719,7 @@ app.post('/api/studios/:id/drafts/revise', async (c) => {
       brandMention: options.brandMention,
       audience: options.audience,
       tone: options.tone,
+      requirements: options.requirements ?? '',
       instruction: message,
       draft: current,
       history: recentDraftTurns(prior),

@@ -40,6 +40,23 @@ export interface DraftRequestOptions {
   length: DraftLength
   allowBragging: boolean
   brandMention: BrandMention
+  /** 用户写在「需求」里的语气、读者和篇幅。模板只是预填这段文字。 */
+  requirements?: string
+}
+
+export const REQUIREMENT_TEMPLATES = [
+  { id: 'spoken', label: '口语亲切', requirements: '语气口语、亲切，像在跟同行聊天。读者是第一次接触这件事的业务方。篇幅按平台走，不要官腔。' },
+  { id: 'restrained', label: '偏专业克制', requirements: '语气专业、克制，少用感叹。读者是要做决策的负责人。先讲问题和做法，不夸团队。篇幅中等。' },
+  { id: 'hook', label: '短帖钩子优先', requirements: '篇幅偏短。第一句就是钩子，尽快写出客户卡住的一件事。少铺垫。语气直接。' },
+  { id: 'long', label: '偏长说明', requirements: '篇幅偏长。把交付过程写清楚，一段只讲一件事。读者想看完整做法。语气平稳。' },
+  { id: 'boundary', label: '突出交付边界', requirements: '突出做什么、不做什么。边界只用素材里已经写明的说法，不要扩成承诺。语气克制。' },
+  { id: 'price', label: '突出价格区间', requirements: '如果素材里已经写了价格说明，可以照抄那一句；没有就整篇不提价格，不要编造区间。语气直接，篇幅按平台。' },
+] as const
+
+export function lengthFromRequirements(text: string, fallback: DraftLength = 'medium'): DraftLength {
+  if (/偏短|短帖|篇幅短/.test(text)) return 'short'
+  if (/偏长|篇幅长|长说明/.test(text)) return 'long'
+  return fallback
 }
 
 const CONTENT_IDS = new Set<string>(CONTENT_TYPES.map((item) => item.id))
@@ -55,14 +72,14 @@ const HARD_SELL =
   /硬广|立即咨询|马上咨询|欢迎咨询|点击咨询|行业领先|赋能数字化|一眼广告|广告腔|立刻下单|限时优惠|扫码咨询/
 
 export const IMPLANT_LEVELS = [
-  { id: 'none', label: '不植入', description: '不把题目写进正文，也不强行带品牌。' },
-  { id: 'light', label: '软植入', description: '把相关题目的答案写进故事，结尾轻轻留下品牌名或真实官网。' },
-  { id: 'guide', label: '明确种草', description: '题目可写可不写。篇幅与软植入相同，结尾单独写出品牌、官网和下一步。' },
+  { id: 'none', label: '不带品牌', description: '可以写主题。正文不出现品牌名，也不写成问答。' },
+  { id: 'light', label: '轻轻带一次', description: '故事围绕主题，结尾轻轻留下品牌名或真实官网。' },
+  { id: 'guide', label: '明确带出', description: '篇幅与轻轻带一次相同，结尾单独写出品牌、官网和下一步。' },
 ] as const
 
-export const IMPLANT_PURPOSE = '为了让相关题目更容易被 AI 引用：故事里写出能对上这道题的事实，并轻轻留下品牌或官网。正文仍以素材故事为主。'
+export const IMPLANT_PURPOSE = '主题是这篇的切入点。轻轻带出时，故事里写出能对上主题的事实，并留下品牌或官网。正文仍以素材为主。'
 
-export const SOFT_IMPLANT_HINT = '会把这道题的答案写进故事，引用句要能直接回答它，结尾再轻轻留下一次品牌或真实官网。'
+export const SOFT_IMPLANT_HINT = '会把主题的答案写进故事，引用句要能直接回答它，结尾再轻轻留下一次品牌或真实官网。'
 
 export const PUBLISH_PLATFORMS = [
   { id: 'xiaohongshu', label: '小红书', contentType: 'short-post', channel: 'xiaohongshu', format: '服务短帖' },
@@ -155,13 +172,14 @@ export function parseDraftOptions(input: unknown, channel: DraftChannel): DraftR
   const record = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
   const requested = typeof record.contentType === 'string' ? record.contentType.trim() : ''
   const contentType = isContentType(requested) ? requested : contentTypeForChannel(channel)
+  const requirements = typeof record.requirements === 'string' ? record.requirements.trim().slice(0, 800) : ''
   const lengthRaw = typeof record.length === 'string' ? record.length.trim() : ''
-  const length: DraftLength = LENGTHS.has(lengthRaw) ? (lengthRaw as DraftLength) : 'medium'
+  const length: DraftLength = LENGTHS.has(lengthRaw) ? (lengthRaw as DraftLength) : lengthFromRequirements(requirements)
   const audience = typeof record.audience === 'string' ? record.audience.trim().slice(0, 200) : ''
   const tone = typeof record.tone === 'string' ? record.tone.trim().slice(0, 200) : ''
   const mention = record.brandMention
   const brandMention: BrandMention = mention === 'light' || mention === 'guide' || mention === 'none' ? mention : 'none'
-  return { audience, contentType, tone, length, allowBragging: record.allowBragging === true, brandMention }
+  return { audience, contentType, tone, length, allowBragging: record.allowBragging === true, brandMention, requirements }
 }
 
 export function parseAssetIds(value: unknown): { ok: true; ids: string[] } | { ok: false; error: string } {
@@ -225,8 +243,9 @@ export function assembleDraftPrompt(
         : options.brandMention === 'light'
           ? `citeSentences 是 2 到 4 句故事里的事实，可以不带品牌名。${hintRule}`
           : `citeSentences 是 2 到 4 句可引用的话。品牌名可以出现，但不要每句都是广告。${hintRule}`
+  const requirements = options.requirements?.trim() ?? ''
   const system = [
-    '你在把几条素材合成一篇可以分享的内容。先选一个钩子，再按渠道安排结构，不要逐条复述素材库。故事优先，不硬广，不凑字，不写成水文。',
+    '围绕主题（如果有），把勾选的素材合起来，按用户的需求来写，并用所选平台的写法。先选一个钩子，再按渠道安排结构，不要逐条复述素材库。故事优先，不硬广，不凑字，不写成水文。',
     SHOW_DONT_TELL_RULE,
     NO_FABRICATION_RULE,
     mentionRule,
@@ -238,17 +257,22 @@ export function assembleDraftPrompt(
     '只输出 JSON：{"title":"","body":"","citeSentences":["",""],"urlHint":""}。',
     citeRule,
   ].join('')
+  const theme = extra.promptText?.trim() ?? ''
   const questionLine =
     options.brandMention === 'none'
-      ? '题目：这篇不植入，不要把关联题目写进标题或正文，也不要另起问答。'
+      ? theme
+        ? `主题：${theme}。围绕这个切入点写。不植入时不要出现品牌名，不要把主题写成标题或问答。`
+        : '主题：无。这篇不植入，不要把关联题目写进标题或正文，也不要另起问答。'
       : options.brandMention === 'light'
-        ? `题目：${extra.promptText || '无'}。若有题目，在故事中段回答它，引用句必须能直接当作回答。不要以题目开头，不要标注 GEO。`
-        : `题目：${extra.promptText || '无'}`
+        ? `主题：${theme || '无'}。若有主题，在故事中段回答它，引用句必须能直接当作回答。不要以题目开头，不要标注 GEO。`
+        : `主题：${theme || '无'}`
   const user = [
+    '围绕主题（如果有），把勾选的素材合起来，按需求来写，并用这个平台的写法。',
     `内容类型：${contentTypeLabel(options.contentType)}`,
     `发布渠道：${extra.channelLabel}`,
-    `目标读者：${options.audience || studio.customerProfile || studio.targetCustomers[0] || '做类似事情的同行'}`,
-    `语气：${options.tone || studio.voice || '像在讲客户那边发生的变化'}`,
+    `需求：${requirements || '未另写。语气和读者见下面两行，篇幅按平台。'}`,
+    `目标读者：${options.audience || (requirements ? '见需求' : studio.customerProfile || studio.targetCustomers[0] || '做类似事情的同行')}`,
+    `语气：${options.tone || (requirements ? '见需求' : studio.voice || '像在讲客户那边发生的变化')}`,
     `长度：${lengthHint}`,
     PARAGRAPH_RULE,
     formatRule,
@@ -675,7 +699,11 @@ function shapeSellingDraft(assets: Asset[], contentType: string): string | null 
 
 export function implantRule(mention: BrandMention, promptText: string | undefined, brand: string, website: string, contentType: string): string {
   if (mention === 'none') {
-    return '植入强度：不植入。这是从素材写起的案例、产品或服务分享。正文、标题和可引用句都不要出现品牌名。不要写成问答，不要用题目当标题或开头，也不要另起「问/答」或 GEO 问答块。'
+    const theme = promptText?.trim()
+    const angle = theme
+      ? `若给了主题「${theme}」，正文围绕这个切入点，只用勾选素材里的事实来写，不要把主题当成标题或问答。`
+      : '没有主题时，从勾选素材里的问题或做法起笔。'
+    return `植入强度：不植入。这是从素材写起的案例、产品或服务分享。正文、标题和可引用句都不要出现品牌名。${angle}不要写成问答，不要用题目当标题或开头，也不要另起「问/答」或 GEO 问答块。`
   }
   const place = closerPlace(contentType, website)
   if (mention === 'light') {

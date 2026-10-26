@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyBrandPageSave, blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { emptyDetails, readAssetDraft, type Asset } from '../shared/assets.ts'
-import { applyBrandMention, assembleDraftPrompt, finishDraftBody, guideCloser, IMPLANT_LEVELS, IMPLANT_PURPOSE, isPublishableDraft, materialDraft, NO_FABRICATION_RULE, paceDraftBody, PARAGRAPH_RULE, placeholderShare, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, finishDraftBody, guideCloser, IMPLANT_LEVELS, IMPLANT_PURPOSE, isPublishableDraft, lengthFromRequirements, materialDraft, NO_FABRICATION_RULE, paceDraftBody, PARAGRAPH_RULE, parseDraftOptions, placeholderShare, profileGaps, REQUIREMENT_TEMPLATES, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -389,6 +389,39 @@ describe('implant intensity', () => {
     expect(prompt.user).toContain('120 到 400')
     expect(prompt.user).not.toContain('https://example.com')
     expect(prompt.system).not.toContain('https://example.com')
+  })
+
+  it('keeps an optional theme when the brand is not mentioned', () => {
+    const prompt = assembleDraftPrompt(
+      studio,
+      { audience: '', contentType: 'xianyu', tone: '', length: 'short', allowBragging: false, brandMention: 'none', requirements: '语气口语、亲切。' },
+      { channelLabel: '闲鱼', promptText: '验收题怎么写才算交付' },
+      [metricAsset],
+    )
+    expect(prompt.system).toContain('不植入')
+    expect(prompt.system).toContain('不要出现品牌名')
+    expect(prompt.system).toContain('验收题怎么写才算交付')
+    expect(prompt.system).not.toContain('结尾必须有且只有一句软收束')
+    expect(prompt.user).toContain('主题：验收题怎么写才算交付')
+    expect(prompt.user).toContain('语气口语、亲切')
+    expect(prompt.user).toContain('围绕主题')
+  })
+
+  it('reads length, tone and audience from the requirements text', () => {
+    const hook = REQUIREMENT_TEMPLATES.find((item) => item.id === 'hook')
+    const long = REQUIREMENT_TEMPLATES.find((item) => item.id === 'long')
+    const spoken = REQUIREMENT_TEMPLATES.find((item) => item.id === 'spoken')
+    expect(hook && lengthFromRequirements(hook.requirements)).toBe('short')
+    expect(long && lengthFromRequirements(long.requirements)).toBe('long')
+    expect(spoken && lengthFromRequirements(spoken.requirements)).toBe('medium')
+    const parsed = parseDraftOptions({ requirements: long?.requirements, contentType: 'wechat', brandMention: 'none' }, 'wechat')
+    expect(parsed.length).toBe('long')
+    expect(parsed.requirements).toContain('篇幅偏长')
+    const prompt = assembleDraftPrompt(studio, parsed, { channelLabel: '公众号' }, [metricAsset])
+    expect(prompt.user).toContain('1800 到 2800')
+    expect(prompt.user).toContain('篇幅偏长')
+    const explicit = parseDraftOptions({ requirements: '篇幅偏长。', length: 'short', brandMention: 'none' }, 'wechat')
+    expect(explicit.length).toBe('short')
   })
 })
 

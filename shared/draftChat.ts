@@ -63,6 +63,7 @@ export function reviseDraftPrompt(input: {
   brandMention: BrandMention
   audience: string
   tone: string
+  requirements?: string
   instruction: string
   draft: DraftRevisionFields
   history: DraftChatTurn[]
@@ -85,8 +86,10 @@ export function reviseDraftPrompt(input: {
   ].join('\n')
   const user = [
     `渠道：${input.channelLabel}`,
-    `读者：${input.audience.trim() || '沿用当前稿'}`,
-    `语气：${input.tone.trim() || '沿用当前稿'}`,
+    `主题：${input.promptText?.trim() || '无'}`,
+    `需求：${input.requirements?.trim() || '沿用当前稿'}`,
+    `读者：${input.audience.trim() || (input.requirements?.trim() ? '见需求' : '沿用当前稿')}`,
+    `语气：${input.tone.trim() || (input.requirements?.trim() ? '见需求' : '沿用当前稿')}`,
     `当前标题：${input.draft.title}`,
     `当前正文：\n${input.draft.body}`,
     `当前可引用句：\n${input.draft.citeSentences.map((item) => `- ${item}`).join('\n')}`,

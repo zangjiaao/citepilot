@@ -3,7 +3,6 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Badge } from '@astryxdesign/core/Badge'
 import { Button } from '@astryxdesign/core/Button'
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
-import { Collapsible } from '@astryxdesign/core/Collapsible'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
@@ -17,7 +16,7 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import * as stylex from '@stylexjs/stylex'
 import type { DraftChatTurn } from '../../../shared/draftChat.ts'
-import { IMPLANT_LEVELS, IMPLANT_PURPOSE, PUBLISH_PLATFORMS, SOFT_IMPLANT_HINT, contentTypeForChannel, platformForAssetType, publishPlatform, type BrandMention, type DraftLength, type PublishPlatformId } from '../../../shared/draftPrompt.ts'
+import { IMPLANT_LEVELS, PUBLISH_PLATFORMS, REQUIREMENT_TEMPLATES, contentTypeForChannel, platformForAssetType, publishPlatform, type BrandMention, type PublishPlatformId } from '../../../shared/draftPrompt.ts'
 import { platformFormatHint } from '../../../shared/platformFormats.ts'
 import { draftImages, type DraftImage } from '../../../shared/draftImages.ts'
 import { draftPickCap, recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
@@ -26,7 +25,7 @@ import { plainTextFromRich } from '../../../shared/richText.ts'
 import { citePlacement } from '../../../shared/citePlacement.ts'
 import { channelLabel, DRAFT_CHANNELS, formatDraftForCopy } from '../../../shared/drafts.ts'
 import { SOURCE_LABEL } from '../../../shared/platforms.ts'
-import type { ContentDraft, Diagnosis, DraftChannel, DraftPreview, Prompt } from '../../../shared/types.ts'
+import type { ContentDraft, DraftChannel, DraftPreview, Prompt } from '../../../shared/types.ts'
 import { api } from '../api'
 import { formatTime } from '../format'
 import { MarkdownBodyEditor, type MarkdownBodyEditorHandle } from '../markdownEditor'
@@ -93,7 +92,7 @@ function splitLines(value: string): string[] {
 }
 
 function implantNote(mention: BrandMention, platformId: PublishPlatformId): string {
-  if (mention === 'none') return '不植入：不把题目写进正文，也不强行带品牌。'
+  if (mention === 'none') return '不带品牌：主题仍然可以写。正文只用素材，不出现品牌名，也不写成问答。'
   const ending =
     platformId === 'xianyu'
       ? '结尾写闲鱼主页；有真实官网再附一次链接。'
@@ -104,8 +103,8 @@ function implantNote(mention: BrandMention, platformId: PublishPlatformId): stri
           : mention === 'light'
             ? '结尾轻轻留下一次品牌名或真实官网。'
             : '结尾单独成段，写出品牌、官网和下一步。'
-  if (mention === 'light') return `软植入：把相关题目的答案写进故事，引用句能直接回答它。${ending}`
-  return `明确种草：篇幅跟这个平台走。${ending}`
+  if (mention === 'light') return `轻轻带一次：故事围绕主题，引用句能对上它。${ending}`
+  return `明确带出：篇幅跟这个平台走。${ending}`
 }
 
 function publicityVariant(value: Publicity): 'success' | 'warning' | 'neutral' {
@@ -122,11 +121,8 @@ export function DraftsPage() {
   const [mentions, setMentions] = useState<PromptMention[]>([])
   const appliedRecommendation = useRef('')
   const editorRef = useRef<MarkdownBodyEditorHandle>(null)
-  const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([])
   const [drafts, setDrafts] = useState<ContentDraft[]>([])
   const [platformId, setPlatformId] = useState<PublishPlatformId>('xiaohongshu')
-  const [promptCleared, setPromptCleared] = useState(false)
-  const [promptPinned, setPromptPinned] = useState(false)
   const [assetIds, setAssetIds] = useState<string[]>([])
   const [assets, setAssets] = useState<Asset[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -134,14 +130,11 @@ export function DraftsPage() {
   const [pickerQuery, setPickerQuery] = useState('')
   const [pickerType, setPickerType] = useState('')
   const [brandMention, setBrandMention] = useState<BrandMention>('none')
-  const [audience, setAudience] = useState('')
-  const [tone, setTone] = useState('')
-  const [length, setLength] = useState<DraftLength>('medium')
+  const [theme, setTheme] = useState('')
+  const [requirements, setRequirements] = useState('')
   const [missing, setMissing] = useState<string[]>([])
   const [flags, setFlags] = useState<string[]>([])
   const [promptId, setPromptId] = useState('')
-  const [diagnosisId, setDiagnosisId] = useState('')
-  const [gapId, setGapId] = useState('')
   const [preview, setPreview] = useState<DraftPreview | null>(null)
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
@@ -172,9 +165,8 @@ export function DraftsPage() {
   const handledPreset = useRef('')
 
   const load = async (id: string) => {
-    const [promptPayload, diagnosisPayload, draftPayload, assetPayload, observationPayload] = await Promise.all([
+    const [promptPayload, draftPayload, assetPayload, observationPayload] = await Promise.all([
       api<{ prompts: Prompt[] }>(`/api/studios/${id}/prompts`),
-      api<{ diagnoses: Diagnosis[] }>(`/api/studios/${id}/diagnoses`),
       api<{ drafts: ContentDraft[] }>(`/api/studios/${id}/drafts`),
       api<{ assets: Asset[] }>(`/api/studios/${id}/assets`),
       api<{ observations: Array<{ promptId: string; brandMentioned: boolean }> }>(`/api/studios/${id}/observations`).catch(() => ({
@@ -183,7 +175,6 @@ export function DraftsPage() {
     ])
     setPrompts(promptPayload.prompts)
     setMentions(observationPayload.observations.map((item) => ({ promptId: item.promptId, mentioned: item.brandMentioned })))
-    setDiagnoses(diagnosisPayload.diagnoses)
     setDrafts(draftPayload.drafts)
     setAssets(assetPayload.assets)
   }
@@ -197,7 +188,9 @@ export function DraftsPage() {
     setAssets([])
     setAssetIds([])
     setPromptId('')
-    setPromptCleared(false)
+    setTheme('')
+    setRequirements('')
+    setBrandMention('none')
     setLibraryPin('')
     handledPreset.current = ''
     openedDraft.current = ''
@@ -221,6 +214,8 @@ export function DraftsPage() {
     setEditBody(found.body)
     setEditCites(found.citeSentences.join('\n'))
     setEditUrl(found.urlHint)
+    setTheme(found.promptText || '')
+    setPromptId(found.promptId || '')
     setPreview(null)
   }, [draftId, drafts])
 
@@ -251,8 +246,6 @@ export function DraftsPage() {
     document.getElementById('draft-editor')?.scrollIntoView({ block: 'start' })
   }, [editing?.id, narrow])
 
-  const selectedDiagnosis = diagnoses.find((item) => item.id === diagnosisId)
-  const gaps = selectedDiagnosis?.checklist.filter((item) => item.status !== 'pass') ?? []
   const platform = publishPlatform(platformId)
   const contentType = platform.contentType
   const channel = platform.channel
@@ -261,11 +254,6 @@ export function DraftsPage() {
     return recommendDraftSelection({ contentType, assets, studio, prompts, mentions, selectedIds: assetIds })
   }, [studio, contentType, assets, prompts, mentions, assetIds])
   const recommendedPrompt = prompts.find((item) => item.id === recommendation.promptId) ?? null
-
-  useEffect(() => {
-    if (brandMention === 'none' || promptPinned || promptCleared) return
-    setPromptId(recommendation.promptId ?? '')
-  }, [recommendation.promptId, brandMention, promptPinned, promptCleared])
 
   useEffect(() => {
     if (!presetAsset || !studio || assets.length === 0) return
@@ -297,13 +285,6 @@ export function DraftsPage() {
     const pinned = libraryPin ? assets.find((item) => item.id === libraryPin && item.publicity !== 'private') : undefined
     const ids = pinned ? [pinned.id, ...next.assetIds.filter((id) => id !== pinned.id)].slice(0, cap) : next.assetIds
     setAssetIds(ids)
-    setPromptPinned(false)
-    if (brandMention === 'none') {
-      setPromptId('')
-      return
-    }
-    setPromptCleared(false)
-    setPromptId(next.promptId ?? '')
   }, [studio, platformId, contentType, assets, prompts, mentions, libraryPin])
 
   const rerank = () => {
@@ -311,13 +292,6 @@ export function DraftsPage() {
     setLibraryPin('')
     const next = recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
     setAssetIds(next.assetIds)
-    setPromptPinned(false)
-    if (brandMention === 'none') {
-      setPromptId('')
-      return
-    }
-    setPromptCleared(false)
-    setPromptId(next.promptId ?? '')
   }
 
   const recommendedAssets = recommendation.assetIds
@@ -386,15 +360,12 @@ export function DraftsPage() {
         body: JSON.stringify({
           channel,
           contentType,
-          audience,
-          tone,
-          length,
+          requirements,
+          theme,
           brandMention,
           assetIds,
-          promptId: brandMention === 'none' ? null : promptId || null,
-          linkPrompt: brandMention === 'light' && !promptCleared,
-          diagnosisId: diagnosisId || null,
-          gapId: gapId || null,
+          promptId: promptId || null,
+          linkPrompt: false,
         }),
       })
       setEditing(null)
@@ -536,9 +507,8 @@ export function DraftsPage() {
           assetIds,
           contentType: editing ? contentTypeForChannel(editChannel) : contentType,
           brandMention,
-          audience,
-          tone,
-          length,
+          requirements,
+          theme,
         }),
       })
       setChat((current) => [...current, { role: 'user', content: instruction }, { role: 'assistant', content: result.note }])
@@ -752,7 +722,7 @@ export function DraftsPage() {
       <Text color="secondary">{platformFormatHint(platform.id)}</Text>
       <VStack gap={2}>
         <HStack gap={2} vAlign="center" wrap="wrap">
-          <Heading level={3}>主题 / 素材</Heading>
+          <Heading level={3}>素材</Heading>
           <Button label="重新推荐" size="sm" variant="ghost" onClick={rerank} isDisabled={!studio || assets.length === 0} />
         </HStack>
         <Text color="secondary">已按发布平台推荐，可取消勾选或打开素材库另选</Text>
@@ -779,114 +749,65 @@ export function DraftsPage() {
         )}
         <Button label="从素材库挑选" size="sm" variant="secondary" onClick={openPicker} />
       </VStack>
-      <Selector
-        label="植入（关联题目）"
-        description={IMPLANT_PURPOSE}
-        value={brandMention}
-        options={IMPLANT_LEVELS.map((item) => ({ value: item.id, label: item.label, description: item.description }))}
-        onChange={(value) => {
-          if (value !== 'none' && value !== 'light' && value !== 'guide') return
-          setBrandMention(value)
-          if (value === 'none') {
-            setPromptId('')
-            setPromptCleared(true)
-            setPromptPinned(false)
-            return
-          }
-          setPromptCleared(false)
-          setPromptPinned(false)
-          if (!promptId && recommendation.promptId) {
-            setPromptId(recommendation.promptId)
-          }
-        }}
-      />
-      <Text color="secondary">{IMPLANT_PURPOSE}</Text>
-      <Text color="secondary">{implantNote(brandMention, platform.id)}</Text>
-      {brandMention !== 'none' ? (
+      <VStack gap={2}>
+        <Heading level={3}>主题</Heading>
+        <Text color="secondary">这篇围绕什么问题来写。可以从题库选，也可以自己写。不带品牌时也可以留主题，正文仍只用素材。</Text>
         <Selector
-          label="关联题目"
-          description={brandMention === 'light' ? '优先当前勾选的素材能回答的题。可以换，也可以清空。' : '可选。优先对上已勾选的素材；留空就只写品牌收束。'}
+          label="从题库填入"
           value={promptId}
           hasSearch
-          options={[{ value: '', label: '不关联题目' }, ...prompts.map((item) => ({ value: item.id, label: item.text }))]}
+          options={[{ value: '', label: '自己写主题' }, ...prompts.map((item) => ({ value: item.id, label: item.text }))]}
           onChange={(value) => {
             const next = value || ''
             setPromptId(next)
-            setPromptCleared(!next)
-            setPromptPinned(Boolean(next) && next !== (recommendation.promptId ?? ''))
+            const text = prompts.find((item) => item.id === next)?.text ?? ''
+            if (text) setTheme(text)
           }}
         />
-      ) : null}
-      {brandMention !== 'none' && recommendedPrompt && promptId === recommendedPrompt.id ? (
-        <Text color="secondary">已推荐：{recommendedPrompt.text}</Text>
-      ) : null}
-      {brandMention === 'light' && promptId ? <Text color="secondary">{SOFT_IMPLANT_HINT}</Text> : null}
-      {recommendation.promptIds.length > 1 && brandMention === 'light' ? (
-        <Text color="secondary">
-          另外相关：
-          {recommendation.promptIds
-            .filter((id) => id !== promptId)
-            .map((id) => prompts.find((item) => item.id === id)?.text)
-            .filter(Boolean)
-            .join('；')}
-        </Text>
-      ) : null}
-      <VStack gap={2}>
-        <Heading level={3}>语气 / 目标读者</Heading>
-        <Text color="secondary">决定稿子像在对谁说话。不填就用品牌页里的语气和客户画像。</Text>
-        <TextInput label="目标读者" description="写给谁看，例如设备部长或第一次做知识库的团队。" value={audience} onChange={setAudience} width="100%" />
-        <TextInput label="语气" description="以什么角色来写，例如驻场工程师对着业务方讲已经发生的变化。" value={tone} onChange={setTone} width="100%" />
+        <TextArea
+          label="主题"
+          description="切入点。留空就只按素材来写。"
+          value={theme}
+          rows={3}
+          width="100%"
+          onChange={(value) => {
+            setTheme(value)
+            const selected = prompts.find((item) => item.id === promptId)
+            if (selected && value.trim() !== selected.text) setPromptId('')
+          }}
+        />
+        {recommendedPrompt && theme.trim() !== recommendedPrompt.text ? (
+          <Button
+            label="用相关题目作主题"
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setPromptId(recommendedPrompt.id)
+              setTheme(recommendedPrompt.text)
+            }}
+          />
+        ) : null}
+        <Selector
+          label="品牌带出"
+          description="不带品牌时，主题仍然有效，只是正文不写品牌名。"
+          value={brandMention}
+          options={IMPLANT_LEVELS.map((item) => ({ value: item.id, label: item.label, description: item.description }))}
+          onChange={(value) => {
+            if (value === 'none' || value === 'light' || value === 'guide') setBrandMention(value)
+          }}
+        />
+        <Text color="secondary">{implantNote(brandMention, platform.id)}</Text>
       </VStack>
-      <Collapsible defaultIsOpen={false} trigger="高级">
-        <VStack gap={3}>
-          <Selector
-            label="长度"
-            value={length}
-            options={[
-              { value: 'short', label: '短' },
-              { value: 'medium', label: '中' },
-              { value: 'long', label: '长' },
-            ]}
-            onChange={(value) => {
-              if (value === 'short' || value === 'medium' || value === 'long') setLength(value)
-            }}
-          />
-          <Collapsible defaultIsOpen={false} trigger="品牌边界">
-            <VStack gap={2}>
-              <Text color="secondary">禁用词和合规红线来自品牌页。语气和读者在上面填写。</Text>
-              <Text>{studio?.bannedWords?.trim() ? `禁用词：${studio.bannedWords.trim()}` : '没有禁用词。'}</Text>
-              <Text>{studio?.compliance?.trim() ? `合规红线：${studio.compliance.trim()}` : '没有额外合规红线。'}</Text>
-              <HStack gap={2} wrap="wrap">
-                <Button label="打开素材库" size="sm" variant="secondary" onClick={() => navigate('/library')} />
-                <Button label="到品牌里修改" size="sm" variant="secondary" onClick={() => navigate('/studio')} />
-              </HStack>
-            </VStack>
-          </Collapsible>
-          <Selector
-            label="关联诊断"
-            description="可选。选一次诊断后，可以指定一个未通过的检查项。"
-            value={diagnosisId}
-            options={[
-              { value: '', label: '不关联诊断' },
-              ...diagnoses.map((item) => ({
-                value: item.id,
-                label: `${formatTime(item.createdAt)} ${item.finalUrl || item.url}`,
-              })),
-            ]}
-            onChange={(value) => {
-              setDiagnosisId(value || '')
-              setGapId('')
-            }}
-          />
-          <Selector
-            label="诊断缺口"
-            value={gapId}
-            isDisabled={!diagnosisId}
-            options={[{ value: '', label: '不指定缺口' }, ...gaps.map((item) => ({ value: item.id, label: item.label, description: item.detail }))]}
-            onChange={(value) => setGapId(value || '')}
-          />
-        </VStack>
-      </Collapsible>
+      <VStack gap={2}>
+        <Heading level={3}>需求</Heading>
+        <Text color="secondary">点一个模板会填进下面，可以再改。语气、读者和篇幅都写在这里。</Text>
+        <HStack gap={2} wrap="wrap">
+          {REQUIREMENT_TEMPLATES.map((item) => (
+            <Button key={item.id} label={item.label} size="sm" variant="secondary" onClick={() => setRequirements(item.requirements)} />
+          ))}
+        </HStack>
+        <TextArea label="需求" value={requirements} onChange={setRequirements} rows={4} width="100%" />
+      </VStack>
     </VStack>
   )
 
@@ -1012,7 +933,7 @@ export function DraftsPage() {
       <Heading level={2}>草稿</Heading>
       <EmptyState
         title={narrow ? '先在上方选素材并生成' : '先在左侧选素材并生成'}
-        description="选好发布平台和素材，再点生成草稿。生成后可以用对话改标题和正文，保存后再分享。"
+        description="选好发布平台、素材、主题和需求，再点生成草稿。生成后可以用对话改标题和正文。"
       />
     </VStack>
   )
@@ -1055,7 +976,7 @@ export function DraftsPage() {
   return (
     <PageFrame
       title={draftId ? '编辑草稿' : '新建草稿'}
-      description="先生成，再用对话改标题和正文。保存后可以复制只读分享链接。发布仍在站外完成。"
+      description="配置只有平台、素材、主题和需求。生成后可以用对话改稿，保存后可以分享。发布仍在站外完成。"
     >
       <VStack gap={3} height="100%" xstyle={styles.page}>
         <HStack gap={2} vAlign="center">
