@@ -11,10 +11,10 @@ import { addedPromptSummary, assemblePromptGeneration, assessPromptCoverage, isC
 import { applyBrandPageSave, readBrandProfile } from '../shared/brandProfile.ts'
 import { readStudioList, type StudioListField } from '../shared/studioLists.ts'
 import { applyBrandMention, assembleDraftPrompt, channelForContentType, finishDraftBody, isContentType, isPublishableDraft, materialDraft, parseAssetIds, parseDraftOptions, placeholderShare, profileGaps, rewriteGenericSentences } from '../shared/draftPrompt.ts'
+import { acceptDraftRevision, assetFactsForRevision, NO_MODEL_REVISION, parseDraftChatHistory, recentDraftTurns, REVISION_UNCHANGED, reviseDraftPrompt } from '../shared/draftChat.ts'
 import { backfillDraftImages, draftImages } from '../shared/draftImages.ts'
 import { relatedDraftPrompts } from '../shared/recommendDraft.ts'
-import { readAssetDraft } from '../shared/assets.ts'
-import { acceptPolishedHtml, POLISH_SYSTEM, polishNotesOffline } from '../shared/polishAsset.ts'
+import { readAssetDraft, type Asset } from '../shared/assets.ts'
 import { assertPublicHttpUrl } from '../shared/ssrf.ts'
 import type { Cluster, ContentDraft, Cycle, CycleTrendPoint, Diagnosis, DraftPreview, Observation, Overview, Prompt, Studio } from '../shared/types.ts'
 import {
@@ -24,20 +24,26 @@ import {
   deletePrompt,
   deleteStudio,
   getDraft,
+  getOpenDraftShare,
+  getShareView,
   insertCycle,
   insertDiagnosis,
   insertDraft,
+  insertDraftMessages,
   insertObservation,
   insertPrompts,
   insertStudio,
   listCycles,
   listDiagnoses,
+  listDraftMessages,
   listDrafts,
   listObservations,
   listPrompts,
   listStudios,
   mustCycle,
   mustStudio,
+  openDraftShare,
+  revokeDraftShare,
   updateDraft,
   updateStudio,
 } from './db.ts'
@@ -483,36 +489,6 @@ app.delete('/api/studios/:id/assets/:assetId', async (c) => {
   return c.json({ ok: true })
 })
 
-app.post('/api/studios/:id/assets/polish', async (c) => {
-  await mustStudio(c.env.DB, c.req.param('id'))
-  const record = asRecord(await readJson(c))
-  const notes = stringField(record, 'notes').trim()
-  if (!notes) throw new HttpError(400, '先在右侧写下笔记，再一起整理', 'body')
-  if (notes.length > 20000) throw new HttpError(400, '笔记太长', 'body')
-  const title = stringField(record, 'title').trim().slice(0, 80)
-  const metrics = Array.isArray(record.metrics)
-    ? record.metrics.filter((item): item is string => typeof item === 'string').slice(0, 12).join('\n')
-    : ''
-  const source = [title, notes, metrics].filter(Boolean).join('\n')
-  const fallback = polishNotesOffline(notes)
-  const writer = await resolveLlm(c.env.DB, c.env, 'generate')
-  if (!writer.enabled) return c.json({ body: fallback, source: 'notes' })
-  try {
-    const raw = await completeJson(
-      writer,
-      POLISH_SYSTEM,
-      `标题：${title || '未写'}\n已授权的数据：\n${metrics || '没有'}\n笔记：\n${notes}`,
-      0.2,
-    )
-    const accepted = acceptPolishedHtml(raw, source)
-    if (!accepted) return c.json({ body: fallback, source: 'notes' })
-    return c.json({ body: accepted, source: 'model' })
-  } catch (error) {
-    console.error(JSON.stringify({ message: 'asset polish failed', error: error instanceof Error ? error.message : String(error) }))
-    return c.json({ body: fallback, source: 'notes' })
-  }
-})
-
 app.post('/api/studios/:id/media', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
   const form = await c.req.formData()
@@ -697,6 +673,99 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
   return c.json({ draft, gaps, flags: polished.flags, warning })
 })
 
+app.post('/api/studios/:id/drafts/revise', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const record = asRecord(await readJson(c))
+  const message = optionalString(record, 'message').trim().slice(0, 2000)
+  if (!message) throw new HttpError(400, '先写一句要改的地方', 'message')
+  const parsed = parseDraftEdit(record)
+  if (!parsed.ok) throw new HttpError(400, parsed.error)
+  const draftId = optionalId(record.draftId)
+  let promptText = ''
+  if (draftId) {
+    const existing = await getDraft(c.env.DB, studio.id, draftId)
+    promptText = existing.promptText
+  }
+  const options = parseDraftOptions(record, parsed.value.channel)
+  const picked = parseAssetIds(record.assetIds)
+  if (!picked.ok) throw new HttpError(400, picked.error, 'assetIds')
+  const library = picked.ids.length > 0 ? await listAssets(c.env.DB, studio.id) : []
+  const selected = picked.ids.map((id) => library.find((item) => item.id === id))
+  if (selected.some((item) => !item)) throw new HttpError(404, '有一条勾选的素材已经不在库里')
+  const assets = selected.filter((item): item is Asset => Boolean(item))
+  const hidden = assets.find((item) => item.publicity === 'private')
+  if (hidden) throw new HttpError(400, `「${hidden.title}」标成不可公开，不会用来改稿`)
+  const current = {
+    title: parsed.value.title,
+    body: parsed.value.body,
+    citeSentences: parsed.value.citeSentences,
+    urlHint: parsed.value.urlHint,
+  }
+  const prior = draftId ? await listDraftMessages(c.env.DB, studio.id, draftId) : parseDraftChatHistory(record.history)
+  const channelMeta = DRAFT_CHANNELS.find((item) => item.id === parsed.value.channel) ?? DRAFT_CHANNELS[0]
+  const unchanged = async (note: string) => {
+    if (draftId) await rememberRevision(c.env.DB, studio.id, draftId, message, note)
+    return c.json({ changed: false, note, ...current })
+  }
+  const writer = await resolveLlm(c.env.DB, c.env, 'generate')
+  if (!writer.enabled) return unchanged(NO_MODEL_REVISION)
+  try {
+    const prompt = reviseDraftPrompt({
+      brand: studio.name,
+      website: studio.website,
+      promptText,
+      channelLabel: channelLabel(parsed.value.channel),
+      contentType: options.contentType,
+      length: options.length,
+      brandMention: options.brandMention,
+      audience: options.audience,
+      tone: options.tone,
+      instruction: message,
+      draft: current,
+      history: recentDraftTurns(prior),
+      assetFacts: assetFactsForRevision(assets),
+    })
+    const raw = await completeJson(writer, prompt.system, prompt.user, 0.3)
+    const accepted = acceptDraftRevision(raw)
+    if (!accepted) return unchanged(REVISION_UNCHANGED)
+    const rewritten = rewriteGenericSentences(
+      accepted.body,
+      assets,
+      options.allowBragging,
+      `${current.title}\n${current.body}\n${current.urlHint}\n${current.citeSentences.join('\n')}`,
+    )
+    const body = rewritten.body.trim()
+    const urlHint = coerceUrlHint(accepted.urlHint, studio.website, channelMeta.path, parsed.value.channel, studio.name)
+    if (body.length < 40 || body.length > 8000 || urlHint.length < 8 || urlHint.length > 300) return unchanged(REVISION_UNCHANGED)
+    const fields = {
+      channel: parsed.value.channel,
+      title: accepted.title,
+      body,
+      citeSentences: accepted.citeSentences,
+      urlHint,
+    }
+    let saved: ContentDraft | undefined
+    if (draftId) {
+      saved = await updateDraft(c.env.DB, studio.id, draftId, fields, new Date().toISOString())
+      await rememberRevision(c.env.DB, studio.id, draftId, message, accepted.note)
+    }
+    console.log(JSON.stringify({ message: 'draft revised', id: draftId || null, flags: rewritten.flags.length }))
+    return c.json({
+      changed: true,
+      note: accepted.note,
+      title: fields.title,
+      body: fields.body,
+      citeSentences: fields.citeSentences,
+      urlHint: fields.urlHint,
+      draft: saved,
+    })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    console.error(JSON.stringify({ message: 'draft revise failed', error: detail }))
+    return unchanged('这次对话改稿没有完成，正文还是原来的。')
+  }
+})
+
 app.post('/api/studios/:id/drafts', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
   const record = asRecord(await readJson(c))
@@ -738,6 +807,15 @@ app.post('/api/studios/:id/drafts', async (c) => {
     updatedAt: now,
   }
   await insertDraft(c.env.DB, draft)
+  const messages = parseDraftChatHistory(record.messages).map((turn, index) => ({
+    id: crypto.randomUUID(),
+    draftId: draft.id,
+    studioId: studio.id,
+    role: turn.role,
+    content: turn.content,
+    createdAt: new Date(Date.now() + index).toISOString(),
+  }))
+  await insertDraftMessages(c.env.DB, messages)
   return c.json({ draft }, 201)
 })
 
@@ -779,6 +857,33 @@ app.delete('/api/studios/:id/drafts/:draftId', async (c) => {
   return c.json({ ok: true })
 })
 
+app.get('/api/studios/:id/drafts/:draftId/messages', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const draft = await getDraft(c.env.DB, studio.id, c.req.param('draftId'))
+  const messages = await listDraftMessages(c.env.DB, studio.id, draft.id)
+  return c.json({ messages: messages.map(({ role, content }) => ({ role, content })) })
+})
+
+app.get('/api/studios/:id/drafts/:draftId/share', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const draft = await getDraft(c.env.DB, studio.id, c.req.param('draftId'))
+  return c.json({ share: await getOpenDraftShare(c.env.DB, studio.id, draft.id) })
+})
+
+app.post('/api/studios/:id/drafts/:draftId/share', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const draft = await getDraft(c.env.DB, studio.id, c.req.param('draftId'))
+  const share = await openDraftShare(c.env.DB, studio.id, draft.id, new Date().toISOString())
+  return c.json({ share })
+})
+
+app.delete('/api/studios/:id/drafts/:draftId/share', async (c) => {
+  const studio = await mustStudio(c.env.DB, c.req.param('id'))
+  const draft = await getDraft(c.env.DB, studio.id, c.req.param('draftId'))
+  await revokeDraftShare(c.env.DB, studio.id, draft.id, new Date().toISOString())
+  return c.json({ ok: true })
+})
+
 app.get('/api/studios/:id/compare', async (c) => {
   const studio = await mustStudio(c.env.DB, c.req.param('id'))
   const [prompts, storedObservations, cycles] = await Promise.all([
@@ -793,12 +898,40 @@ app.get('/api/studios/:id/compare', async (c) => {
   return c.json(compareCycles(prompts, observations, from, to, metricScope(studio)))
 })
 
+app.get('/api/shares/:token', async (c) => {
+  const view = await getShareView(c.env.DB, c.req.param('token') || '')
+  if (!view) throw new HttpError(404, '分享链接已经失效')
+  return c.json(view)
+})
+
 app.all('/api/*', (c) => c.json({ error: '没有这个接口' }, 404))
 
 app.all('*', async (c) => {
   if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw)
   return c.text('CitePilot API')
 })
+
+async function rememberRevision(db: D1Database, studioId: string, draftId: string, message: string, note: string) {
+  const now = Date.now()
+  await insertDraftMessages(db, [
+    {
+      id: crypto.randomUUID(),
+      draftId,
+      studioId,
+      role: 'user',
+      content: message,
+      createdAt: new Date(now).toISOString(),
+    },
+    {
+      id: crypto.randomUUID(),
+      draftId,
+      studioId,
+      role: 'assistant',
+      content: note.slice(0, 200),
+      createdAt: new Date(now + 1).toISOString(),
+    },
+  ])
+}
 
 function decodeMediaKey(path: string): string | null {
   const prefix = '/api/media/'

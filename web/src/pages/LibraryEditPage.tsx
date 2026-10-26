@@ -16,7 +16,6 @@ import {
   ASSET_TYPES,
   authorizedMetrics,
   emptyDetails,
-  formatMetric,
   type Asset,
   type AssetImage,
   type AssetLink,
@@ -24,7 +23,6 @@ import {
   type CaseMetric,
   type Publicity,
 } from '../../../shared/assets.ts'
-import { plainTextFromRich } from '../../../shared/richText.ts'
 import { api } from '../api'
 import { MarkdownBodyEditor } from '../markdownEditor'
 import { useStudio } from '../studio'
@@ -122,7 +120,6 @@ export function LibraryEditPage() {
   const [formError, setFormError] = useState('')
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
-  const [polishing, setPolishing] = useState(false)
 
   useEffect(() => {
     if (!studioId || !assetId) return
@@ -191,34 +188,6 @@ export function LibraryEditPage() {
       return null
     } finally {
       setSaving(false)
-    }
-  }
-
-  const polish = async () => {
-    if (!studioId) return
-    const notes = plainTextFromRich(form.body)
-    if (!notes) {
-      setFormError('先在右侧写下笔记，再一起整理。')
-      return
-    }
-    setPolishing(true)
-    setFormError('')
-    try {
-      const result = await api<{ body: string; source: 'model' | 'notes' }>(`/api/studios/${studioId}/assets/polish`, {
-        method: 'POST',
-        body: JSON.stringify({
-          notes,
-          title: form.title,
-          type: form.type,
-          metrics: form.metrics.filter((item) => item.customerAuthorized).map((item) => formatMetric(item)),
-        }),
-      })
-      setForm((current) => ({ ...current, body: result.body }))
-      setNotice(result.source === 'model' ? '已按你的笔记整理，没有另补事实。发布前再看一遍。' : '没有调用模型，只把现有句子分成问题和做法。')
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : '整理失败')
-    } finally {
-      setPolishing(false)
     }
   }
 
@@ -367,10 +336,7 @@ export function LibraryEditPage() {
           />
         </VStack>
       </Collapsible>
-      <VStack gap={2}>
-        <Button label="和 AI 一起打磨成可分享素材" variant="secondary" onClick={() => void polish()} isLoading={polishing} isDisabled={!studioId} />
-        <Text color="secondary">只整理你已经写下的句子，不补数字，不写成硬广或凑字。故事从客户的问题或变化写起。</Text>
-      </VStack>
+      <Text color="secondary">正文在右侧用 Markdown 手写。保存后可以去起草。</Text>
       {form.publicity === 'private' ? <Text color="secondary">不可公开的素材不能去起草。</Text> : null}
     </VStack>
   )

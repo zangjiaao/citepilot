@@ -1,4 +1,5 @@
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { ShareDraftPage } from './pages/ShareDraftPage'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { Icon } from '@astryxdesign/core/Icon'
 import { Selector } from '@astryxdesign/core/Selector'
@@ -32,9 +33,17 @@ const SETTINGS = { to: '/settings', label: '设置', icon: 'menu' } as const
 
 export function App() {
   return (
-    <StudioProvider>
-      <Shell />
-    </StudioProvider>
+    <Routes>
+      <Route path="/share/:token" element={<ShareDraftPage />} />
+      <Route
+        path="*"
+        element={
+          <StudioProvider>
+            <Shell />
+          </StudioProvider>
+        }
+      />
+    </Routes>
   )
 }
 

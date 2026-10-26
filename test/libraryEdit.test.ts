@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { allowedNumbers, assetBlock, assetTypeLabel, detailsFromStored, isAssetType, readAssetDraft } from '../shared/assets.ts'
 import { contentTypeForAsset, platformForAssetType } from '../shared/draftPrompt.ts'
 import { isMediaKey, sniffImage } from '../shared/media.ts'
-import { acceptPolishedHtml, htmlKeepsNumbers, polishNotesOffline } from '../shared/polishAsset.ts'
 import { imageRefsFromHtml, normalizeMarkdownBody, plainTextFromRich } from '../shared/richText.ts'
 
 describe('素材正文', () => {
@@ -44,21 +43,6 @@ describe('素材正文', () => {
     expect(sniffImage(png)).toBe('image/png')
     expect(isMediaKey('studio-chengchuan/abcd-efgh.png')).toBe(true)
     expect(isMediaKey('../secret.png')).toBe(false)
-  })
-})
-
-describe('打磨素材', () => {
-  it('splits existing sentences into markdown and does not add numbers', () => {
-    const notes = '值班员要翻三本手册。后来改成按条款号切开。'
-    const markdown = polishNotesOffline(notes)
-    expect(markdown).toContain('值班员要翻三本手册')
-    expect(markdown).toContain('后来改成按条款号切开')
-    expect(markdown).toContain('## 客户当时的问题')
-    expect(markdown).not.toContain('<p>')
-    expect(htmlKeepsNumbers(notes, markdown)).toBe(true)
-    expect(acceptPolishedHtml({ body: '变成 99 分钟。' }, notes)).toBeNull()
-    expect(acceptPolishedHtml({ body: '行业领先的方案。' }, notes)).toBeNull()
-    expect(polishNotesOffline('只有一句。')).toBe('只有一句。')
   })
 })
 

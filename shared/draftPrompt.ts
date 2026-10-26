@@ -312,8 +312,14 @@ function qualitativeFallback(assets: Asset[]): string {
     .join('\n\n')
 }
 
-export function rewriteGenericSentences(body: string, assets: Asset[], allowBragging: boolean): { body: string; flags: string[] } {
+export function rewriteGenericSentences(
+  body: string,
+  assets: Asset[],
+  allowBragging: boolean,
+  extraAllowedText = '',
+): { body: string; flags: string[] } {
   const allowed = allowedNumbers(assets)
+  for (const match of extraAllowedText.match(/\d+(?:\.\d+)?/g) ?? []) allowed.add(match)
   const flags: string[] = []
   const parts = body.split(/(?<=[。！？\n])/)
   let usedFact = false
@@ -667,7 +673,7 @@ function shapeSellingDraft(assets: Asset[], contentType: string): string | null 
     .join('\n\n')
 }
 
-function implantRule(mention: BrandMention, promptText: string | undefined, brand: string, website: string, contentType: string): string {
+export function implantRule(mention: BrandMention, promptText: string | undefined, brand: string, website: string, contentType: string): string {
   if (mention === 'none') {
     return '植入强度：不植入。这是从素材写起的案例、产品或服务分享。正文、标题和可引用句都不要出现品牌名。不要写成问答，不要用题目当标题或开头，也不要另起「问/答」或 GEO 问答块。'
   }
