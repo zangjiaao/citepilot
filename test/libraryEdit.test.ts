@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { readAssetDraft } from '../shared/assets.ts'
-import { contentTypeForAsset } from '../shared/draftPrompt.ts'
+import { allowedNumbers, assetBlock, assetTypeLabel, detailsFromStored, isAssetType, readAssetDraft } from '../shared/assets.ts'
+import { contentTypeForAsset, platformForAssetType } from '../shared/draftPrompt.ts'
 import { isMediaKey, sniffImage } from '../shared/media.ts'
 import { acceptPolishedHtml, htmlKeepsNumbers, polishNotesOffline } from '../shared/polishAsset.ts'
 import { imageRefsFromHtml, normalizeMarkdownBody, plainTextFromRich } from '../shared/richText.ts'
@@ -72,5 +72,47 @@ describe('去起草', () => {
     expect(contentTypeForAsset('lesson')).toBe('retro')
     expect(contentTypeForAsset('testimonial')).toBe('wechat')
     expect(contentTypeForAsset('reference')).toBe('faq')
+    expect(contentTypeForAsset('service')).toBe('xianyu')
+    expect(platformForAssetType('service')).toBe('xianyu')
+    expect(assetTypeLabel('service')).toBe('服务')
+    expect(isAssetType('service')).toBe(true)
+  })
+})
+
+describe('服务素材', () => {
+  it('keeps optional sell fields and still reads older details', () => {
+    const parsed = readAssetDraft({
+      type: 'service',
+      title: '数据标注',
+      body: '按验收题标一批评测集。',
+      publicity: 'public',
+      details: {
+        problem: '评测集对不上条款',
+        boundaries: '不标未授权的内部文档',
+        deliverables: '评测集和标注说明',
+        priceNote: '100 到 200 元一条',
+      },
+    })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.value.type).toBe('service')
+    expect(parsed.value.details.boundaries).toContain('不标')
+    expect(parsed.value.details.deliverables).toContain('评测集')
+    const stored = {
+      id: 'svc',
+      studioId: 's',
+      createdAt: '',
+      updatedAt: '',
+      ...parsed.value,
+    }
+    expect(allowedNumbers([stored]).has('100')).toBe(true)
+    expect(allowedNumbers([stored]).has('200')).toBe(true)
+    expect(assetBlock(stored)).toContain('价格说明（只可照抄')
+    expect(assetBlock({ ...stored, details: { ...stored.details, priceNote: '' } })).toContain('不要编造报价')
+    const legacy = detailsFromStored({ problem: '旧问题' })
+    expect(legacy.problem).toBe('旧问题')
+    expect(legacy.deliverables).toBe('')
+    expect(legacy.boundaries).toBe('')
+    expect(legacy.priceNote).toBe('')
   })
 })

@@ -47,6 +47,8 @@ export type DraftChannel =
   | 'faq'
   | 'wechat'
   | 'xiaohongshu'
+  | 'xianyu'
+  | 'shipinhao'
   | 'linkedin'
   | 'social-short'
   | 'product-promo'

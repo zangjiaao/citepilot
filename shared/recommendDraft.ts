@@ -11,7 +11,9 @@ const TYPE_WEIGHTS: Record<ContentType, Partial<Record<AssetType, number>>> = {
   'build-log': { lesson: 7, case: 6, idea: 4, interaction: 4, product: 3 },
   retro: { lesson: 9, case: 3, idea: 2, outcome: 2 },
   thread: { idea: 6, interaction: 5, outcome: 5, lesson: 4, case: 3, product: 3 },
-  'short-post': { idea: 6, interaction: 5, outcome: 5, testimonial: 4, lesson: 3, product: 3, case: 2 },
+  'short-post': { service: 10, idea: 6, interaction: 5, outcome: 5, testimonial: 4, lesson: 3, product: 3, case: 2 },
+  xianyu: { service: 12, product: 4, case: 3, idea: 2, outcome: 2 },
+  shipinhao: { service: 12, product: 4, idea: 3, lesson: 2, case: 2 },
   zhihu: { case: 7, outcome: 7, lesson: 4, idea: 3, product: 3, testimonial: 3 },
   wechat: { case: 8, outcome: 8, lesson: 4, testimonial: 4, product: 2, idea: 2 },
   faq: { product: 7, reference: 6, idea: 5, case: 5, lesson: 4, outcome: 4 },
@@ -24,12 +26,18 @@ const CLUSTER_FIT: Record<ContentType, Partial<Record<Cluster, number>>> = {
   retro: { scenario: 3, category: 2 },
   thread: { scenario: 2, category: 2 },
   'short-post': { scenario: 3, category: 2 },
+  xianyu: { scenario: 3, category: 2, brand: 1 },
+  shipinhao: { scenario: 3, category: 2 },
   zhihu: { category: 3, comparison: 2, scenario: 2 },
   wechat: { scenario: 3, brand: 2, category: 2 },
   faq: { category: 4, brand: 3, scenario: 1 },
 }
 
-const SHORT_TYPES = new Set<ContentType>(['short-post', 'thread'])
+const SHORT_TYPES = new Set<ContentType>(['short-post', 'thread', 'xianyu', 'shipinhao'])
+
+export function draftPickCap(contentType: ContentType): number {
+  return SHORT_TYPES.has(contentType) ? 2 : 5
+}
 const RICH_TYPES = new Set<ContentType>(['case-breakdown', 'wechat', 'zhihu'])
 const STRONG_SCORE = 6
 
@@ -60,7 +68,7 @@ export function recommendDraftSelection(input: {
   const ranked = usable
     .map((item) => ({ id: item.id, score: scoreAsset(item, input.contentType, input.studio) }))
     .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
-  const cap = SHORT_TYPES.has(input.contentType) ? 2 : 5
+  const cap = draftPickCap(input.contentType)
   const strong = ranked.filter((item) => item.score >= STRONG_SCORE).length
   const count = ranked.length === 0 ? 0 : Math.min(cap, Math.max(1, Math.min(strong, cap)))
   const picked = ranked.slice(0, count).map((item) => item.id)
@@ -153,7 +161,15 @@ function studioTerms(studio: StudioLike): string[] {
 }
 
 function assetText(asset: Asset): string {
-  return [asset.title, plainTextFromRich(asset.body), asset.details.problem, asset.details.approach, asset.details.howItWorks].join('')
+  return [
+    asset.title,
+    plainTextFromRich(asset.body),
+    asset.details.problem,
+    asset.details.approach,
+    asset.details.howItWorks,
+    asset.details.deliverables,
+    asset.details.boundaries,
+  ].join('')
 }
 
 function overlapCount(text: string, terms: string[]): number {

@@ -345,6 +345,51 @@ describe('implant intensity', () => {
     expect(placeholder.body.trim().endsWith(studio.name)).toBe(true)
     expect(placeholder.body).not.toContain('example.com')
   })
+
+  it('keeps 闲鱼、视频号 and 小红书 usable when the website is only a placeholder', () => {
+    const service: Asset = {
+      ...metricAsset,
+      id: 'svc',
+      type: 'service',
+      title: '企业智能体开发',
+      body: '按验收题交付一版可上线的业务流程。',
+      details: {
+        ...emptyDetails(),
+        problem: '演示能聊，一问验收就停住',
+        approach: '和业务一起写验收题再开发',
+        howItWorks: '先定边界，再做一条可点开出处的流程',
+        boundaries: '不承诺素材里没有的准确率',
+        deliverables: '验收题、一版流程、交接说明',
+      },
+    }
+    const blankSite = { ...studio, website: 'https://example.com' }
+    const listing = materialDraft(blankSite, [service], '/', 'light', '', 'xianyu')
+    expect(listing.urlHint).toBe(`闲鱼主页：${studio.name}`)
+    expect(listing.body).toContain('- ')
+    expect(listing.body).toContain('闲鱼主页')
+    expect(listing.body).not.toContain('example.com')
+    expect(listing.body).not.toMatch(/\d+\s*元/)
+    const spoken = materialDraft(blankSite, [service], '/', 'guide', '', 'shipinhao')
+    expect(spoken.urlHint).toBe(`视频号私信：${studio.name}`)
+    expect(spoken.body).toContain('视频号私信')
+    expect(spoken.body).toContain('画面：')
+    expect(spoken.body).not.toContain('example.com')
+    const note = materialDraft(blankSite, [service], '/faq', 'light', '', 'short-post')
+    expect(note.body).toContain('边界')
+    expect(note.body).toContain('私信')
+    expect(note.body).not.toContain('example.com')
+    expect(note.urlHint).not.toContain('example.com')
+    const prompt = assembleDraftPrompt(
+      blankSite,
+      { audience: '', contentType: 'xianyu', tone: '', length: 'short', allowBragging: false, brandMention: 'light' },
+      { channelLabel: '闲鱼' },
+      [service],
+    )
+    expect(prompt.system).toContain('闲鱼主页')
+    expect(prompt.user).toContain('120 到 400')
+    expect(prompt.user).not.toContain('https://example.com')
+    expect(prompt.system).not.toContain('https://example.com')
+  })
 })
 
 describe('readAssetDraft', () => {

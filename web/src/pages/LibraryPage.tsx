@@ -115,7 +115,7 @@ export function LibraryPage() {
   return (
     <PageFrame
       title="素材库"
-      description="案例、产品、巧思和数据成效都在这里。点一条去编辑，写成可分享的故事后再去起草。"
+      description="案例、产品、服务和数据成效都在这里。点一条去编辑，写成可分享的故事后再去起草。"
       actions={<Button label="新建素材" variant="primary" onClick={() => navigate('/library/new')} isDisabled={!studioId} />}
     >
       <VStack gap={4}>

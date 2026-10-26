@@ -18,7 +18,7 @@ import * as stylex from '@stylexjs/stylex'
 import { IMPLANT_LEVELS, IMPLANT_PURPOSE, PUBLISH_PLATFORMS, SOFT_IMPLANT_HINT, platformForAssetType, publishPlatform, type BrandMention, type DraftLength, type PublishPlatformId } from '../../../shared/draftPrompt.ts'
 import { platformFormatHint } from '../../../shared/platformFormats.ts'
 import { draftImages, type DraftImage } from '../../../shared/draftImages.ts'
-import { recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
+import { draftPickCap, recommendDraftSelection, type PromptMention } from '../../../shared/recommendDraft.ts'
 import { ASSET_TYPES, assetTypeLabel, publicityLabel, type Asset, type Publicity } from '../../../shared/assets.ts'
 import { plainTextFromRich } from '../../../shared/richText.ts'
 import { citePlacement } from '../../../shared/citePlacement.ts'
@@ -88,6 +88,22 @@ function splitLines(value: string): string[] {
     .split('\n')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function implantNote(mention: BrandMention, platformId: PublishPlatformId): string {
+  if (mention === 'none') return '不植入：不把题目写进正文，也不强行带品牌。'
+  const ending =
+    platformId === 'xianyu'
+      ? '结尾写闲鱼主页；有真实官网再附一次链接。'
+      : platformId === 'shipinhao'
+        ? '结尾写视频号私信；有真实官网再附一次链接。'
+        : platformId === 'xiaohongshu'
+          ? '结尾写私信，或留下一次真实链接。'
+          : mention === 'light'
+            ? '结尾轻轻留下一次品牌名或真实官网。'
+            : '结尾单独成段，写出品牌、官网和下一步。'
+  if (mention === 'light') return `软植入：把相关题目的答案写进故事，引用句能直接回答它。${ending}`
+  return `明确种草：篇幅跟这个平台走。${ending}`
 }
 
 function publicityVariant(value: Publicity): 'success' | 'warning' | 'neutral' {
@@ -245,7 +261,7 @@ export function DraftsPage() {
     if (appliedRecommendation.current === key) return
     appliedRecommendation.current = key
     const next = recommendDraftSelection({ contentType, assets, studio, prompts, mentions })
-    const cap = contentType === 'short-post' || contentType === 'thread' ? 2 : 5
+    const cap = draftPickCap(contentType)
     const pinned = libraryPin ? assets.find((item) => item.id === libraryPin && item.publicity !== 'private') : undefined
     const ids = pinned ? [pinned.id, ...next.assetIds.filter((id) => id !== pinned.id)].slice(0, cap) : next.assetIds
     setAssetIds(ids)
@@ -587,7 +603,7 @@ export function DraftsPage() {
       <Heading level={2}>配置</Heading>
       <Selector
         label="发布平台"
-        description="先选发到哪里。格式会跟着变：小红书是短帖，公众号是长文，知乎是回答，thread 是一串短句。"
+        description="先选发到哪里。小红书是服务短帖，闲鱼是商品说明，视频号是口播；公众号、知乎和官网仍按原来的篇幅。"
         value={platformId}
         options={PUBLISH_PLATFORMS.map((item) => ({ value: item.id, label: item.label, description: item.format }))}
         onChange={(value) => {
@@ -649,13 +665,7 @@ export function DraftsPage() {
         }}
       />
       <Text color="secondary">{IMPLANT_PURPOSE}</Text>
-      <Text color="secondary">
-        {brandMention === 'none'
-          ? '不植入：不把题目写进正文，也不强行带品牌。'
-          : brandMention === 'light'
-            ? '软植入：把相关题目的答案写进故事，引用句能直接回答它。结尾轻轻留下一次品牌名或真实官网。'
-            : '明确种草：篇幅与软植入相同。结尾单独成段，写出品牌、官网和下一步。'}
-      </Text>
+      <Text color="secondary">{implantNote(brandMention, platform.id)}</Text>
       {brandMention !== 'none' ? (
         <Selector
           label="关联题目"
@@ -880,7 +890,7 @@ export function DraftsPage() {
   return (
     <PageFrame
       title={draftId ? '编辑草稿' : '新建草稿'}
-      description="故事优先，不硬广，不凑字。先选发布平台，再用素材把相关题目答成能被引用的句子。"
+      description="故事优先，不硬广，不凑字。可以发到小红书、闲鱼或视频号，也可以写公众号和官网。发布仍在站外完成。"
     >
       <VStack gap={3} height="100%" xstyle={styles.page}>
         <HStack gap={2} vAlign="center">

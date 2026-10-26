@@ -67,6 +67,9 @@ interface FormState {
   problem: string
   approach: string
   howItWorks: string
+  deliverables: string
+  boundaries: string
+  priceNote: string
   quote: string
   quoteAuthorized: boolean
   links: AssetLink[]
@@ -85,6 +88,9 @@ const emptyForm: FormState = {
   problem: '',
   approach: '',
   howItWorks: '',
+  deliverables: '',
+  boundaries: '',
+  priceNote: '',
   quote: '',
   quoteAuthorized: false,
   links: [],
@@ -146,8 +152,10 @@ export function LibraryEditPage() {
   const dirty = JSON.stringify(form) !== baseline
   const showMetrics = form.type === 'case' || form.type === 'outcome'
   const showQuote = form.type === 'case' || form.type === 'testimonial'
-  const showProblem = form.type === 'case' || form.type === 'product' || form.type === 'idea' || form.type === 'interaction'
-  const showHow = form.type === 'product' || form.type === 'idea'
+  const service = form.type === 'service'
+  const showProblem = form.type === 'case' || form.type === 'product' || form.type === 'idea' || form.type === 'interaction' || service
+  const showApproach = form.type === 'case' || service
+  const showHow = form.type === 'product' || form.type === 'idea' || service
   const authorized = authorizedMetrics({ ...emptyDetails(), metrics: form.metrics })
 
   const back = () => {
@@ -260,10 +268,36 @@ export function LibraryEditPage() {
       />
       <TextInput label="标签 / 关键词" description="用逗号分隔。" value={form.tags} onChange={(value) => setForm({ ...form, tags: value })} width="100%" />
       <Text color="secondary">{authorized.length > 0 ? `已授权 ${authorized.length} 组前后数据` : '还没有已授权的前后数据'}</Text>
-      {showProblem ? <TextArea label="客户的问题" value={form.problem} onChange={(value) => setForm({ ...form, problem: value })} rows={3} width="100%" /> : null}
+      {service ? <Text color="secondary">写清客户要解决的事、交付做法和边界。价格只有已经可以公开时才填，起草不会编造报价。</Text> : null}
+      {showProblem ? (
+        <TextArea label={service ? '客户要解决的事' : '客户的问题'} value={form.problem} onChange={(value) => setForm({ ...form, problem: value })} rows={3} width="100%" />
+      ) : null}
       {form.type === 'case' ? <TextInput label="客户行业" description="可以匿名，只写行业。" value={form.industry} onChange={(value) => setForm({ ...form, industry: value })} width="100%" /> : null}
-      {form.type === 'case' ? <TextArea label="做法" value={form.approach} onChange={(value) => setForm({ ...form, approach: value })} rows={3} width="100%" /> : null}
-      {showHow ? <TextArea label="它是什么 / 怎么运作" value={form.howItWorks} onChange={(value) => setForm({ ...form, howItWorks: value })} rows={3} width="100%" /> : null}
+      {showApproach ? (
+        <TextArea label={service ? '交付做法' : '做法'} value={form.approach} onChange={(value) => setForm({ ...form, approach: value })} rows={3} width="100%" />
+      ) : null}
+      {showHow ? (
+        <TextArea
+          label={service ? '一个具体做法' : '它是什么 / 怎么运作'}
+          value={form.howItWorks}
+          onChange={(value) => setForm({ ...form, howItWorks: value })}
+          rows={3}
+          width="100%"
+        />
+      ) : null}
+      {service ? (
+        <VStack gap={2}>
+          <TextArea label="交付物" description="也可以写在右侧正文里。" value={form.deliverables} onChange={(value) => setForm({ ...form, deliverables: value })} rows={3} width="100%" />
+          <TextArea label="不做什么" description="边界。起草时用来挡住说得过满的句子。" value={form.boundaries} onChange={(value) => setForm({ ...form, boundaries: value })} rows={3} width="100%" />
+          <TextInput
+            label="价格说明"
+            description="留空就不会写价格。只填已经可以公开的区间。"
+            value={form.priceNote}
+            onChange={(value) => setForm({ ...form, priceNote: value })}
+            width="100%"
+          />
+        </VStack>
+      ) : null}
       {showMetrics ? (
         <VStack gap={2}>
           <Heading level={3}>前后数据</Heading>
@@ -410,6 +444,9 @@ function formFromAsset(asset: Asset): FormState {
     problem: asset.details.problem,
     approach: asset.details.approach,
     howItWorks: asset.details.howItWorks,
+    deliverables: asset.details.deliverables,
+    boundaries: asset.details.boundaries,
+    priceNote: asset.details.priceNote,
     quote: asset.details.quote,
     quoteAuthorized: asset.details.quoteAuthorized,
     links: asset.links,
@@ -435,6 +472,9 @@ function payloadFrom(form: FormState) {
       problem: form.problem,
       approach: form.approach,
       howItWorks: form.howItWorks,
+      deliverables: form.deliverables,
+      boundaries: form.boundaries,
+      priceNote: form.priceNote,
       quote: form.quote,
       quoteAuthorized: form.quoteAuthorized,
       metrics: form.metrics,

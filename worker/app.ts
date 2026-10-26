@@ -629,12 +629,16 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
       const raw = await completeJson(
         writer,
         prompt.system,
-        `${prompt.user}\n素材摘录（不要原样交回）：${JSON.stringify(brief)}\n把勾选的素材写成完整的一篇，先写客户侧的变化。明确种草也按同样篇幅写，不要缩短成广告短帖。`,
+        `${prompt.user}\n素材摘录（不要原样交回）：${JSON.stringify(brief)}\n${
+          options.contentType === 'xianyu' || options.contentType === 'shipinhao' || options.contentType === 'short-post'
+            ? '按平台格式写成完整的一篇，篇幅跟上面的长度走。闲鱼用列表，视频号用短句口播，小红书按钩子、边界、一个做法。不要拉成官网长文，不要编造价格。'
+            : '把勾选的素材写成完整的一篇，先写客户侧的变化。明确种草也按同样篇幅写，不要缩短成广告短帖。'
+        }`,
         0.4,
       )
       const accepted = acceptDraft(raw, studio.name, options.brandMention)
       if (accepted && isPublishableDraft(accepted.body, options.contentType)) {
-        brief = { ...accepted, urlHint: coerceUrlHint(accepted.urlHint, studio.website, channelMeta?.path ?? '/') }
+        brief = { ...accepted, urlHint: coerceUrlHint(accepted.urlHint, studio.website, channelMeta?.path ?? '/', channel, studio.name) }
         source = 'deepseek'
       } else {
         warning = DRAFT_TEMPLATE_WARNING
@@ -670,11 +674,12 @@ app.post('/api/studios/:id/drafts/generate', async (c) => {
     studio.name,
     studio.website,
     options.brandMention,
+    options.contentType,
   )
   brief = {
     ...brief,
     body: finishDraftBody(brief.body, studio.name, studio.website, options.brandMention, options.contentType),
-    urlHint: coerceUrlHint(brief.urlHint, studio.website, channelMeta?.path ?? '/'),
+    urlHint: coerceUrlHint(brief.urlHint, studio.website, channelMeta?.path ?? '/', channel, studio.name),
   }
   const gaps = profileGaps(studio, options, selected)
 
