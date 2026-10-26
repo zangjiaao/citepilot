@@ -155,7 +155,7 @@ export function DraftsPage() {
   const [chat, setChat] = useState<DraftChatTurn[]>([])
   const [chatInput, setChatInput] = useState('')
   const [revising, setRevising] = useState(false)
-  const [showConfig, setShowConfig] = useState(() => !draftId)
+  const [showConfig, setShowConfig] = useState(true)
   const [shareToken, setShareToken] = useState<string | null>(null)
   const [shareBusy, setShareBusy] = useState(false)
   const [libraryPin, setLibraryPin] = useState('')
