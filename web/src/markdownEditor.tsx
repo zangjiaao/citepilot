@@ -4,6 +4,14 @@ import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/Layout'
 import { insertMarkdownSnippet } from '../../shared/richText.ts'
 
+export function MarkdownPreview({ value }: { value: string }) {
+  return (
+    <div className="citepilot-md-preview" data-color-mode="light">
+      <MDEditor.Markdown source={value} />
+    </div>
+  )
+}
+
 export interface MarkdownBodyEditorHandle {
   insert: (snippet: string) => void
 }

@@ -99,6 +99,31 @@ describe('recommendDraftSelection', () => {
     expect(result.assetIds.every((id) => ['idea', 'interaction', 'product', 'outcome', 'lesson'].includes(id))).toBe(true)
   })
 
+  it('prefers a service asset for 小红书、闲鱼 and 视频号', () => {
+    const service = asset({
+      id: 'service',
+      type: 'service',
+      title: '智能体开发',
+      body: '按验收题交付一版流程。',
+      details: {
+        ...emptyDetails(),
+        problem: '演示能聊，一问验收就停住',
+        approach: '先写验收题',
+        howItWorks: '一条流程先上线',
+        boundaries: '不含未授权的数据标注量',
+        deliverables: '验收题和交接说明',
+      },
+    })
+    const hidden = asset({ ...service, id: 'hidden-service', publicity: 'private' })
+    const pool = [...library, service, hidden]
+    for (const contentType of ['short-post', 'xianyu', 'shipinhao'] as const) {
+      const result = recommendDraftSelection({ contentType, assets: pool, studio })
+      expect(result.assetIds[0]).toBe('service')
+      expect(result.assetIds).not.toContain('hidden-service')
+      expect(result.rankedIds).not.toContain('hidden-service')
+    }
+  })
+
   it('suggests a weak overlapping question and skips one that does not fit', () => {
     const fitted = recommendDraftSelection({
       contentType: 'case-breakdown',

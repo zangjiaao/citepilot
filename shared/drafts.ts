@@ -11,7 +11,9 @@ export const DRAFT_CHANNELS: ReadonlyArray<{
   { id: 'site-article', label: '官网长文', path: '/guides/how-we-deliver', hint: '放在官网，作为可被整段引用的说明页' },
   { id: 'faq', label: 'FAQ页', path: '/faq', hint: '用问答补上诊断里常见的「可引用问答」缺口' },
   { id: 'wechat', label: '公众号', path: '/insights', hint: '文章发出后，把规范链接指向这个官网地址' },
-  { id: 'xiaohongshu', label: '小红书', path: '/faq', hint: '短内容只做入口，可引用的定义留在这个官网地址' },
+  { id: 'xiaohongshu', label: '小红书', path: '/faq', hint: '服务短帖：钩子、边界、一个做法，再私信或真实链接' },
+  { id: 'xianyu', label: '闲鱼', path: '/', hint: '商品说明：短标题和列表，价格只照抄素材' },
+  { id: 'shipinhao', label: '视频号', path: '/', hint: '口播短稿，大约 15 到 60 秒，一句一事' },
   { id: 'linkedin', label: 'LinkedIn/行业稿', path: '/insights/practice', hint: '行业稿里的事实句指向这个官网地址' },
   { id: 'social-short', label: '社媒短帖', path: '/', hint: '短帖只留一句事实和一个链接' },
   { id: 'product-promo', label: '产品宣传', path: '/product', hint: '产品说明或版本说明页，方便回答引擎引用' },
@@ -47,10 +49,27 @@ export function landingUrl(website: string, channelPath: string): string {
   return `${siteOrigin(website)}${path}`
 }
 
-export function coerceUrlHint(urlHint: string, website: string, channelPath: string): string {
+export function offsiteUrlHint(channel: string, brand: string): string {
+  const name = brand.trim()
+  const hint =
+    channel === 'xianyu'
+      ? name
+        ? `闲鱼主页：${name}`
+        : '闲鱼主页：私信看服务'
+      : channel === 'shipinhao'
+        ? name
+          ? `视频号私信：${name}`
+          : '视频号私信：看主页说明'
+        : ''
+  if (!hint) return ''
+  return hint.length >= 8 ? hint : `${hint}（无官网）`
+}
+
+export function coerceUrlHint(urlHint: string, website: string, channelPath: string, channel = '', brand = ''): string {
   const landing = landingUrl(website, channelPath)
-  const fallback = landing || PLACEHOLDER_URL_HINT
-  if (/example\.com/i.test(urlHint) || isPlaceholderWebsite(urlHint) || isPlaceholderWebsite(website)) return fallback
+  const offsite = landing ? '' : offsiteUrlHint(channel, brand)
+  const fallback = landing || offsite || PLACEHOLDER_URL_HINT
+  if (!website.trim() || /example\.com/i.test(urlHint) || isPlaceholderWebsite(urlHint) || isPlaceholderWebsite(website)) return fallback
   const studioHost = siteHost(website)
   const hintHost = siteHost(urlHint)
   if (!studioHost || !hintHost || hintHost.toLowerCase() !== studioHost.toLowerCase()) return fallback
@@ -60,7 +79,8 @@ export function coerceUrlHint(urlHint: string, website: string, channelPath: str
 export function templateDraft(context: DraftContext): DraftBrief {
   const channel = DRAFT_CHANNELS.find((item) => item.id === context.channel) ?? DRAFT_CHANNELS[0]
   const landing = landingUrl(context.studio.website, channel.path)
-  const urlHint = landing ? `${landing} — ${channel.hint}` : PLACEHOLDER_URL_HINT
+  const offsite = offsiteUrlHint(channel.id, context.studio.name)
+  const urlHint = landing ? `${landing} — ${channel.hint}` : offsite || PLACEHOLDER_URL_HINT
   return {
     title: cap(titleFor(context), 80),
     body: bodyFor(context).trim(),
@@ -149,7 +169,11 @@ function titleFor(context: DraftContext): string {
     case 'wechat':
       return `先写清边界，再谈上线：${name}的公开做法`
     case 'xiaohongshu':
-      return `${name}做企业智能体，先看这三件事`
+      return `${name}：先写边界，再讲一个做法`
+    case 'xianyu':
+      return `闲鱼：${name}的${solution}`
+    case 'shipinhao':
+      return `${name}视频号：先说清边界`
     case 'linkedin':
       return `前场部署智能体：${name}愿意公开的做法`
     case 'social-short':
@@ -169,6 +193,10 @@ function bodyFor(context: DraftContext): string {
       return wechatBody(context)
     case 'xiaohongshu':
       return xiaohongshuBody(context)
+    case 'xianyu':
+      return xianyuBody(context)
+    case 'shipinhao':
+      return shipinhaoBody(context)
     case 'linkedin':
       return linkedinBody(context)
     case 'social-short':
@@ -260,21 +288,59 @@ function wechatBody(context: DraftContext): string {
 
 function xiaohongshuBody(context: DraftContext): string {
   const { studio } = context
-  const points = [
-    studio.capabilities[0] || fallbackCapability(studio),
-    studio.targetCustomers[0] || '先写清要服务的行业和团队，不要写「所有企业」',
-    studio.cases[0] || studio.solutions[0] || fallbackSolution(studio),
+  const problem = studio.customerPains.trim() || studio.targetCustomers[0] || '先写清客户卡住的一件事'
+  const boundary = studio.services[0] || '只做资料里写明的范围'
+  const method = studio.capabilities[0] || studio.solutions[0] || fallbackSolution(studio)
+  return [
+    `${studio.name}先对齐一件事：${problem}。`,
+    '',
+    `边界是：${boundary}。`,
+    '',
+    `一个做法：${method}。`,
+    '',
+    '想对上这项服务，可以私信，或打开资料里已经写明的真实链接。没有真实官网时不要写示例域名。',
+    optionalBlocks(context),
+    '不写品牌资料里没有的客户名、报价和效果数字。',
+  ]
+    .filter((part) => part !== '')
+    .join('\n')
+}
+
+function xianyuBody(context: DraftContext): string {
+  const { studio } = context
+  const items = [
+    studio.services[0] || fallbackCapability(studio),
+    studio.capabilities[0] || fallbackSolution(studio),
+    studio.targetCustomers[0] || '先写清要服务的行业，不要写所有企业',
   ]
   return [
-    `${studio.name}做企业智能体，先对齐三件事：`,
+    `${studio.name}在闲鱼上挂的是一项服务。`,
     '',
-    `1. ${points[0]}`,
-    `2. ${points[1]}`,
-    `3. ${points[2]}`,
+    ...items.map((item) => `- ${item}`),
     '',
-    '先看能不能验收，再看演示好不好看。定义和案例放在官网，短帖只负责把人带到那一页。',
+    '价格只有资料里写过才出现在这一条。没有写价格，这里不报数字。',
+    '没有真实官网时，引导到闲鱼主页，不要写示例域名。',
     optionalBlocks(context),
-    '不写品牌资料里没有的客户名和效果数字。',
+  ]
+    .filter((part) => part !== '')
+    .join('\n')
+}
+
+function shipinhaoBody(context: DraftContext): string {
+  const { studio } = context
+  const service = studio.services[0] || fallbackCapability(studio)
+  const boundary = studio.services[1] || studio.capabilities[0] || '只做资料里写明的范围'
+  return [
+    `${studio.name}做的是可验收的交付。`,
+    '',
+    `先说边界：${boundary}。`,
+    '',
+    `一个做法：${service}。`,
+    '',
+    '画面：字幕只重复这一句边界。',
+    '',
+    '想了解范围，可以在视频号私信。没有真实官网时不要念示例网址。',
+    optionalBlocks(context),
   ]
     .filter((part) => part !== '')
     .join('\n')
@@ -349,7 +415,14 @@ function citeSentencesFor(context: DraftContext): string[] {
   if (studied) sentences.push(studied)
   else if (studio.cases[0]) sentences.push(`${studio.name}可以公开核对的例子：${studio.cases[0]}。`)
   if (context.gapLabel) sentences.push(`${studio.name}的公开页需要补上「${context.gapLabel}」，补完后再让回答引擎引用。`)
-  if (sentences.length < 2) sentences.push(`${studio.name}的公开说明以官网 ${studio.website} 为准。`)
+  if (sentences.length < 2) {
+    const site = studio.website.trim()
+    sentences.push(
+      site && !isPlaceholderWebsite(site)
+        ? `${studio.name}的公开说明以官网 ${site} 为准。`
+        : `${studio.name}的公开说明以已经写下的服务范围为准。`,
+    )
+  }
   return sentences.slice(0, 5)
 }
 

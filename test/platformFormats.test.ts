@@ -23,6 +23,8 @@ const studio: Studio = {
 
 const markers: Record<PublishPlatformId, string> = {
   xiaohongshu: '不要用 Markdown',
+  xianyu: '短列表',
+  shipinhao: '视频号私信',
   wechat: '小标题少',
   zhihu: '感谢邀请',
   thread: '1/N',
@@ -32,6 +34,8 @@ const markers: Record<PublishPlatformId, string> = {
 
 const contentTypes: Record<PublishPlatformId, ContentType> = {
   xiaohongshu: 'short-post',
+  xianyu: 'xianyu',
+  shipinhao: 'shipinhao',
   wechat: 'wechat',
   zhihu: 'zhihu',
   thread: 'thread',
@@ -85,7 +89,9 @@ describe('platform format rules', () => {
   })
 
   it('uses the same one-line hint the platform picker shows', () => {
-    expect(platformFormatHint('xiaohongshu')).toBe('小红书：短段、无 Markdown、标题约20字内')
+    expect(platformFormatHint('xiaohongshu')).toBe('小红书：钩子、边界、一个做法，再私信或链接')
+    expect(platformFormatHint('xianyu')).toBe('闲鱼：短标题加列表，价格只照抄素材')
+    expect(platformFormatHint('shipinhao')).toBe('视频号：15 到 60 秒口播，短句，可加画面行')
     expect(platformFormatHint('wechat')).toBe('公众号：先写场景，手机上两三句一段，小标题少')
     expect(platformFormatHint('zhihu')).toBe('知乎：第一段先回答，再给案例，不要「感谢邀请」')
     expect(platformFormatHint('thread')).toBe('thread：5 到 8 条，每条一个点，标成 1/N')
@@ -94,5 +100,27 @@ describe('platform format rules', () => {
     expect(platformFormatHint('unknown')).toBe(platformFormatHint('xiaohongshu'))
     expect(platformFormatRule('build-log', 'medium', 'none')).toContain('公众号')
     expect(platformFormatRule('interaction', 'medium', 'none')).toContain('官网案例拆解')
+  })
+
+  it('writes 小红书、闲鱼 and 视频号 as service-selling formats', () => {
+    const note = platformFormatRule('short-post', 'medium', 'light')
+    expect(note).toContain('钩子')
+    expect(note).toContain('边界')
+    expect(note).toContain('一个具体做法')
+    expect(note).toContain('私信')
+    expect(note).toContain('不是生活方式笔记')
+
+    const listing = platformFormatRule('xianyu', 'short', 'none')
+    expect(listing).toContain('120 到 400')
+    expect(listing).toContain('不要编造区间')
+    expect(listing).toContain('闲鱼主页')
+    expect(promptFor('xianyu', 'short').user).toContain('120 到 400')
+
+    const spoken = platformFormatRule('shipinhao', 'medium', 'guide')
+    expect(spoken).toContain('15 到 60')
+    expect(spoken).toContain('80 到 320')
+    expect(spoken).toContain('画面：')
+    expect(promptFor('shipinhao').user).toContain('15 到 60')
+    expect(promptFor('shipinhao').system).toContain(spoken)
   })
 })

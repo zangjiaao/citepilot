@@ -58,6 +58,9 @@ describe('templateDraft', () => {
     )
     expect(coerceUrlHint('https://example.com/faq', 'https://example.com', '/faq')).toBe(PLACEHOLDER_URL_HINT)
     expect(coerceUrlHint('https://example.com/faq', 'https://example.com', '/faq')).not.toContain('example.com')
+    expect(coerceUrlHint('https://example.com/', '', '/', 'xianyu', '澄川智能体工场')).toBe('闲鱼主页：澄川智能体工场')
+    expect(coerceUrlHint('', 'https://example.com', '/', 'shipinhao', '澄川智能体工场')).toBe('视频号私信：澄川智能体工场')
+    expect(coerceUrlHint('https://example.com/item', 'https://www.oak-studio.org/', '/', 'xianyu', studio.name)).toBe('https://www.oak-studio.org/')
   })
 
   it('gives every channel its own title and a body that names the studio', () => {
@@ -70,6 +73,23 @@ describe('templateDraft', () => {
       expect(draft.body).toContain('澄川智能体工场')
       expect(draft.citeSentences.length).toBeGreaterThanOrEqual(2)
     }
+  })
+
+  it('uses 闲鱼主页 and 视频号私信 when the website is only a placeholder', () => {
+    const listing = templateDraft({ studio, channel: 'xianyu' })
+    expect(listing.urlHint).toBe('闲鱼主页：澄川智能体工场')
+    expect(listing.urlHint).not.toContain('example.com')
+    expect(listing.body).toContain('- ')
+    expect(listing.body).not.toContain('example.com')
+    expect(listing.body).not.toMatch(/\d+\s*元/)
+    const spoken = templateDraft({ studio, channel: 'shipinhao' })
+    expect(spoken.urlHint).toBe('视频号私信：澄川智能体工场')
+    expect(spoken.urlHint).not.toContain('example.com')
+    expect(spoken.body).toContain('画面：')
+    expect(spoken.body).not.toContain('example.com')
+    const owned = templateDraft({ studio: { ...studio, website: 'https://www.oak-studio.org/' }, channel: 'xianyu' })
+    expect(owned.urlHint.startsWith('https://www.oak-studio.org/')).toBe(true)
+    expect(owned.urlHint).not.toContain('闲鱼主页')
   })
 
   it('still drafts from positioning when the profile lists are empty', () => {

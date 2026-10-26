@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyBrandPageSave, blankBrandProfile, readBrandProfile } from '../shared/brandProfile.ts'
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { emptyDetails, readAssetDraft, type Asset } from '../shared/assets.ts'
-import { applyBrandMention, assembleDraftPrompt, finishDraftBody, guideCloser, IMPLANT_LEVELS, IMPLANT_PURPOSE, isPublishableDraft, materialDraft, NO_FABRICATION_RULE, paceDraftBody, PARAGRAPH_RULE, placeholderShare, profileGaps, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
+import { applyBrandMention, assembleDraftPrompt, finishDraftBody, guideCloser, IMPLANT_LEVELS, IMPLANT_PURPOSE, isPublishableDraft, lengthFromRequirements, materialDraft, NO_FABRICATION_RULE, paceDraftBody, PARAGRAPH_RULE, parseDraftOptions, placeholderShare, profileGaps, REQUIREMENT_TEMPLATES, rewriteGenericSentences, SHOW_DONT_TELL_RULE, SOFT_IMPLANT_HINT, softCloser } from '../shared/draftPrompt.ts'
 import type { Studio } from '../shared/types.ts'
 
 const studio: Studio = {
@@ -344,6 +344,84 @@ describe('implant intensity', () => {
     expect(placeholder.body.split(studio.name).length - 1).toBe(1)
     expect(placeholder.body.trim().endsWith(studio.name)).toBe(true)
     expect(placeholder.body).not.toContain('example.com')
+  })
+
+  it('keeps 闲鱼、视频号 and 小红书 usable when the website is only a placeholder', () => {
+    const service: Asset = {
+      ...metricAsset,
+      id: 'svc',
+      type: 'service',
+      title: '企业智能体开发',
+      body: '按验收题交付一版可上线的业务流程。',
+      details: {
+        ...emptyDetails(),
+        problem: '演示能聊，一问验收就停住',
+        approach: '和业务一起写验收题再开发',
+        howItWorks: '先定边界，再做一条可点开出处的流程',
+        boundaries: '不承诺素材里没有的准确率',
+        deliverables: '验收题、一版流程、交接说明',
+      },
+    }
+    const blankSite = { ...studio, website: 'https://example.com' }
+    const listing = materialDraft(blankSite, [service], '/', 'light', '', 'xianyu')
+    expect(listing.urlHint).toBe(`闲鱼主页：${studio.name}`)
+    expect(listing.body).toContain('- ')
+    expect(listing.body).toContain('闲鱼主页')
+    expect(listing.body).not.toContain('example.com')
+    expect(listing.body).not.toMatch(/\d+\s*元/)
+    const spoken = materialDraft(blankSite, [service], '/', 'guide', '', 'shipinhao')
+    expect(spoken.urlHint).toBe(`视频号私信：${studio.name}`)
+    expect(spoken.body).toContain('视频号私信')
+    expect(spoken.body).toContain('画面：')
+    expect(spoken.body).not.toContain('example.com')
+    const note = materialDraft(blankSite, [service], '/faq', 'light', '', 'short-post')
+    expect(note.body).toContain('边界')
+    expect(note.body).toContain('私信')
+    expect(note.body).not.toContain('example.com')
+    expect(note.urlHint).not.toContain('example.com')
+    const prompt = assembleDraftPrompt(
+      blankSite,
+      { audience: '', contentType: 'xianyu', tone: '', length: 'short', allowBragging: false, brandMention: 'light' },
+      { channelLabel: '闲鱼' },
+      [service],
+    )
+    expect(prompt.system).toContain('闲鱼主页')
+    expect(prompt.user).toContain('120 到 400')
+    expect(prompt.user).not.toContain('https://example.com')
+    expect(prompt.system).not.toContain('https://example.com')
+  })
+
+  it('keeps an optional theme when the brand is not mentioned', () => {
+    const prompt = assembleDraftPrompt(
+      studio,
+      { audience: '', contentType: 'xianyu', tone: '', length: 'short', allowBragging: false, brandMention: 'none', requirements: '语气口语、亲切。' },
+      { channelLabel: '闲鱼', promptText: '验收题怎么写才算交付' },
+      [metricAsset],
+    )
+    expect(prompt.system).toContain('不植入')
+    expect(prompt.system).toContain('不要出现品牌名')
+    expect(prompt.system).toContain('验收题怎么写才算交付')
+    expect(prompt.system).not.toContain('结尾必须有且只有一句软收束')
+    expect(prompt.user).toContain('主题：验收题怎么写才算交付')
+    expect(prompt.user).toContain('语气口语、亲切')
+    expect(prompt.user).toContain('围绕主题')
+  })
+
+  it('reads length, tone and audience from the requirements text', () => {
+    const hook = REQUIREMENT_TEMPLATES.find((item) => item.id === 'hook')
+    const long = REQUIREMENT_TEMPLATES.find((item) => item.id === 'long')
+    const spoken = REQUIREMENT_TEMPLATES.find((item) => item.id === 'spoken')
+    expect(hook && lengthFromRequirements(hook.requirements)).toBe('short')
+    expect(long && lengthFromRequirements(long.requirements)).toBe('long')
+    expect(spoken && lengthFromRequirements(spoken.requirements)).toBe('medium')
+    const parsed = parseDraftOptions({ requirements: long?.requirements, contentType: 'wechat', brandMention: 'none' }, 'wechat')
+    expect(parsed.length).toBe('long')
+    expect(parsed.requirements).toContain('篇幅偏长')
+    const prompt = assembleDraftPrompt(studio, parsed, { channelLabel: '公众号' }, [metricAsset])
+    expect(prompt.user).toContain('1800 到 2800')
+    expect(prompt.user).toContain('篇幅偏长')
+    const explicit = parseDraftOptions({ requirements: '篇幅偏长。', length: 'short', brandMention: 'none' }, 'wechat')
+    expect(explicit.length).toBe('short')
   })
 })
 

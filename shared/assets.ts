@@ -8,6 +8,7 @@ export type BrandMention = 'none' | 'light' | 'guide'
 export const ASSET_TYPES = [
   { id: 'case', label: '案例' },
   { id: 'product', label: '产品' },
+  { id: 'service', label: '服务' },
   { id: 'idea', label: '巧思' },
   { id: 'interaction', label: '交互细节' },
   { id: 'outcome', label: '数据成效' },
@@ -47,6 +48,12 @@ export interface AssetDetails {
   problem: string
   approach: string
   howItWorks: string
+  /** 服务素材的交付物。旧数据没有这一项时按空字符串读。 */
+  deliverables: string
+  /** 服务素材的边界：不做什么。 */
+  boundaries: string
+  /** 已经可以公开的价格说明。空着就不要在稿子里写价格。 */
+  priceNote: string
   metrics: CaseMetric[]
   quote: string
   quoteAuthorized: boolean
@@ -87,7 +94,19 @@ export function publicityLabel(value: Publicity): string {
 }
 
 export function emptyDetails(): AssetDetails {
-  return { industry: '', problem: '', approach: '', howItWorks: '', metrics: [], quote: '', quoteAuthorized: false, images: [] }
+  return {
+    industry: '',
+    problem: '',
+    approach: '',
+    howItWorks: '',
+    deliverables: '',
+    boundaries: '',
+    priceNote: '',
+    metrics: [],
+    quote: '',
+    quoteAuthorized: false,
+    images: [],
+  }
 }
 
 export function authorizedMetrics(details: AssetDetails): CaseMetric[] {
@@ -111,6 +130,12 @@ export function assetAngles(asset: Asset): string[] {
   if (asset.details.howItWorks.trim()) angles.push(`讲它怎么运作：${clip(asset.details.howItWorks)}`)
   if (asset.details.quoteAuthorized && asset.details.quote.trim()) angles.push(`用客户原话收束：${clip(asset.details.quote)}`)
   if (asset.type === 'product') angles.push(`写成这个产品解决的一件具体事：${clip(asset.title)}`)
+  if (asset.type === 'service') {
+    if (asset.details.boundaries.trim()) angles.push(`先写清边界：${clip(asset.details.boundaries)}`)
+    if (asset.details.deliverables.trim()) angles.push(`只列已经写明的交付物：${clip(asset.details.deliverables)}`)
+    angles.push(`按「要解决的事 → 边界 → 一个具体做法」来写这项服务：${clip(asset.title)}`)
+    if (!asset.details.priceNote.trim()) angles.push('不要写价格；素材里没有可以公开的价格说明')
+  }
   if (angles.length < 3) angles.push(`按「问题 → 做法 → 客户侧变化」来组织：${clip(asset.title)}`)
   return angles.slice(0, 5)
 }
@@ -157,6 +182,15 @@ export function assetBlock(asset: Asset): string {
     `客户问题：${asset.details.problem || '未写'}`,
     `做法：${asset.details.approach || '未写'}`,
     `怎么运作：${asset.details.howItWorks || '未写'}`,
+    asset.details.deliverables.trim() ? `交付物：${asset.details.deliverables.trim()}` : '',
+    asset.details.boundaries.trim() ? `边界：${asset.details.boundaries.trim()}` : '',
+    asset.type === 'service'
+      ? asset.details.priceNote.trim()
+        ? `价格说明（只可照抄，不可改写数字）：${asset.details.priceNote.trim()}`
+        : '价格说明：没有。不要编造报价、单价或区间，也不要写面议价。'
+      : asset.details.priceNote.trim()
+        ? `价格说明（只可照抄，不可改写数字）：${asset.details.priceNote.trim()}`
+        : '',
     metrics.length > 0 ? `已授权的前后数据：\n${metrics.map((item) => `- ${formatMetric(item)}`).join('\n')}` : '已授权的前后数据：没有。不要编造时间、成本、准确率或吞吐。',
     hidden > 0 ? `另有 ${hidden} 条未授权数据，不要写出那些数字。` : '',
     asset.details.quoteAuthorized && asset.details.quote.trim()
@@ -265,6 +299,9 @@ export function allowedNumbers(assets: Asset[]): Set<string> {
     collect(asset.details.problem)
     collect(asset.details.approach)
     collect(asset.details.howItWorks)
+    collect(asset.details.deliverables)
+    collect(asset.details.boundaries)
+    collect(asset.details.priceNote)
     if (asset.details.quoteAuthorized) collect(asset.details.quote)
     for (const metric of asset.details.metrics) {
       if (!metric.customerAuthorized) continue
@@ -284,11 +321,17 @@ function readDetails(value: unknown): { ok: true; value: AssetDetails } | { ok: 
   const problem = text(record.problem, LONG)
   const approach = text(record.approach, LONG)
   const howItWorks = text(record.howItWorks, LONG)
+  const deliverables = text(record.deliverables, LONG)
+  const boundaries = text(record.boundaries, LONG)
+  const priceNote = text(record.priceNote, 200)
   const quote = text(record.quote, 500)
   if (industry === null) return { ok: false, field: 'industry', error: '行业过长' }
   if (problem === null) return { ok: false, field: 'problem', error: '问题过长' }
   if (approach === null) return { ok: false, field: 'approach', error: '做法过长' }
   if (howItWorks === null) return { ok: false, field: 'howItWorks', error: '运作方式过长' }
+  if (deliverables === null) return { ok: false, field: 'deliverables', error: '交付物过长' }
+  if (boundaries === null) return { ok: false, field: 'boundaries', error: '边界过长' }
+  if (priceNote === null) return { ok: false, field: 'priceNote', error: '价格说明过长' }
   if (quote === null) return { ok: false, field: 'quote', error: '客户原话过长' }
   const metrics = readMetrics(record.metrics)
   if (!metrics.ok) return metrics
@@ -301,6 +344,9 @@ function readDetails(value: unknown): { ok: true; value: AssetDetails } | { ok: 
       problem: problem ?? '',
       approach: approach ?? '',
       howItWorks: howItWorks ?? '',
+      deliverables: deliverables ?? '',
+      boundaries: boundaries ?? '',
+      priceNote: priceNote ?? '',
       metrics: metrics.items,
       quote: quote ?? '',
       quoteAuthorized: record.quoteAuthorized === true,

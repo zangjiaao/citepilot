@@ -1,6 +1,8 @@
 import { BRAND_DELETE_ORDER } from '../shared/brandDelete.ts'
 import { blankBrandProfile, readBrandProfile, type BrandProfile } from '../shared/brandProfile.ts'
 import { readStoredCompetitors } from '../shared/competitors.ts'
+import type { DraftChatTurn } from '../shared/draftChat.ts'
+import { isShareToken, newShareToken, publicDraftFromShare, type PublicDraftShare } from '../shared/draftShare.ts'
 import type { DraftEditable } from '../shared/drafts.ts'
 import type { BrandHit, CheckItem, ContentDraft, Cycle, CycleKind, Diagnosis, Observation, Prompt, Sentiment, Studio } from '../shared/types.ts'
 import { HttpError } from './errors.ts'
@@ -439,8 +441,144 @@ export async function updateDraft(
 }
 
 export async function deleteDraft(db: D1Database, studioId: string, draftId: string): Promise<void> {
+  await db.prepare('DELETE FROM draft_messages WHERE draft_id = ? AND studio_id = ?').bind(draftId, studioId).run()
+  await db.prepare('DELETE FROM draft_shares WHERE draft_id = ? AND studio_id = ?').bind(draftId, studioId).run()
   const result = await db.prepare('DELETE FROM drafts WHERE id = ? AND studio_id = ?').bind(draftId, studioId).run()
   if ((result.meta.changes ?? 0) === 0) throw new HttpError(404, '没有找到这篇草稿')
+}
+
+export interface StoredDraftMessage extends DraftChatTurn {
+  id: string
+  draftId: string
+  studioId: string
+  createdAt: string
+}
+
+interface DraftMessageRow {
+  id: string
+  draft_id: string
+  studio_id: string
+  role: DraftChatTurn['role']
+  content: string
+  created_at: string
+}
+
+export async function listDraftMessages(db: D1Database, studioId: string, draftId: string): Promise<StoredDraftMessage[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, draft_id, studio_id, role, content, created_at
+       FROM draft_messages
+       WHERE studio_id = ? AND draft_id = ?
+       ORDER BY created_at ASC
+       LIMIT 80`,
+    )
+    .bind(studioId, draftId)
+    .all<DraftMessageRow>()
+  return results.map((row) => ({
+    id: row.id,
+    draftId: row.draft_id,
+    studioId: row.studio_id,
+    role: row.role,
+    content: row.content,
+    createdAt: row.created_at,
+  }))
+}
+
+export async function insertDraftMessages(db: D1Database, messages: StoredDraftMessage[]): Promise<void> {
+  if (messages.length === 0) return
+  await db.batch(
+    messages.map((message) =>
+      db
+        .prepare(
+          `INSERT INTO draft_messages (id, draft_id, studio_id, role, content, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(message.id, message.draftId, message.studioId, message.role, message.content, message.createdAt),
+    ),
+  )
+}
+
+export interface OpenDraftShare {
+  token: string
+  createdAt: string
+}
+
+interface DraftShareRow {
+  token: string
+  created_at: string
+  revoked_at: string
+}
+
+export async function getOpenDraftShare(db: D1Database, studioId: string, draftId: string): Promise<OpenDraftShare | null> {
+  const row = await db
+    .prepare(
+      `SELECT token, created_at, revoked_at
+       FROM draft_shares
+       WHERE studio_id = ? AND draft_id = ? AND revoked_at = ''
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    )
+    .bind(studioId, draftId)
+    .first<DraftShareRow>()
+  if (!row || !isShareToken(row.token)) return null
+  return { token: row.token, createdAt: row.created_at }
+}
+
+export async function openDraftShare(db: D1Database, studioId: string, draftId: string, now: string): Promise<OpenDraftShare> {
+  const existing = await getOpenDraftShare(db, studioId, draftId)
+  if (existing) return existing
+  const share = { token: newShareToken(), createdAt: now }
+  await db
+    .prepare(
+      `INSERT INTO draft_shares (token, draft_id, studio_id, created_at, revoked_at)
+       VALUES (?, ?, ?, ?, '')`,
+    )
+    .bind(share.token, draftId, studioId, now)
+    .run()
+  return share
+}
+
+export async function revokeDraftShare(db: D1Database, studioId: string, draftId: string, now: string): Promise<void> {
+  await db
+    .prepare(`UPDATE draft_shares SET revoked_at = ? WHERE studio_id = ? AND draft_id = ? AND revoked_at = ''`)
+    .bind(now, studioId, draftId)
+    .run()
+}
+
+interface PublicShareRow {
+  token: string
+  revoked_at: string
+  title: string
+  body: string
+  channel: string
+  cite_sentences: string
+  url_hint: string
+  updated_at: string
+  created_at: string
+}
+
+export async function getShareView(db: D1Database, token: string): Promise<PublicDraftShare | null> {
+  if (!isShareToken(token)) return null
+  const row = await db
+    .prepare(
+      `SELECT s.token, s.revoked_at, d.title, d.body, d.channel, d.cite_sentences, d.url_hint, d.updated_at, d.created_at
+       FROM draft_shares s
+       JOIN drafts d ON d.id = s.draft_id
+       WHERE s.token = ?`,
+    )
+    .bind(token)
+    .first<PublicShareRow>()
+  if (!row) return null
+  return publicDraftFromShare({
+    token: row.token,
+    revokedAt: row.revoked_at,
+    title: row.title,
+    body: row.body,
+    channel: row.channel,
+    citeSentences: parseStringArray(row.cite_sentences),
+    urlHint: row.url_hint,
+    updatedAt: row.updated_at || row.created_at,
+  })
 }
 
 function mapStudio(row: StudioRow): Studio {
